@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flow } from "@/lib/flow-state";
 
 interface Decision {
   sourceKey: string;
@@ -69,8 +70,84 @@ export default function AlignPage() {
   const [hint, setHint] = useState("The organization renamed Sites to Facilities last quarter.");
   const [result, setResult] = useState<AlignResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [fetchStatus, setFetchStatus] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const hydrated = useRef(false);
+
+  async function fetchLive() {
+    const envs = flow.getEnvs();
+    const srcEnv = envs.source;
+    const tgtEnv = envs.targets?.[0];
+    if (!srcEnv?.baseUrl) {
+      setErr("No source configured. Go to /connect and add one first.");
+      return;
+    }
+    if (!tgtEnv?.baseUrl) {
+      setErr("No target configured. Go to /connect and add one first.");
+      return;
+    }
+    setFetching(true);
+    setErr(null);
+    setFetchStatus(`Capturing from ${srcEnv.label} and ${tgtEnv.label}…`);
+
+    async function capture(env: typeof srcEnv, kinds: string[]) {
+      const res = await fetch("/api/capture", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          label: env!.label,
+          baseUrl: env!.baseUrl,
+          authMode: env!.authMode,
+          secret: env!.secret ?? "",
+          csr: env!.csr ?? "",
+          kinds,
+          limit: 1000,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        entities?: Record<string, Array<{ id: string; key?: string; name: string; payload?: unknown }>>;
+        errors?: Record<string, string>;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? `capture ${env!.label} failed: HTTP ${res.status}`);
+      }
+      return body.entities ?? {};
+    }
+
+    try {
+      const [srcEnts, tgtEnts] = await Promise.all([
+        capture(srcEnv, ["level", "property"]),
+        capture(tgtEnv, ["level", "property"]),
+      ]);
+
+      const srcProps = (srcEnts.property ?? []).map((e) => ({
+        key: e.key ?? e.id,
+        name: e.name,
+      }));
+      const tgtProps = (tgtEnts.property ?? []).map((e) => ({
+        key: e.key ?? e.id,
+        name: e.name,
+      }));
+      const srcLevels = (srcEnts.level ?? []).map((e) => e.name).filter(Boolean);
+      const tgtLevels = (tgtEnts.level ?? []).map((e) => e.name).filter(Boolean);
+
+      setSource(JSON.stringify(srcProps, null, 2));
+      setTarget(JSON.stringify(tgtProps, null, 2));
+      setSourceLevels(srcLevels.join(", "));
+      setTargetLevels(tgtLevels.join(", "));
+      setFetchStatus(
+        `Captured ${srcProps.length} source · ${tgtProps.length} target properties. Edit as needed and run alignment.`,
+      );
+    } catch (e) {
+      setErr((e as Error).message);
+      setFetchStatus(null);
+    } finally {
+      setFetching(false);
+    }
+  }
 
   // Hydrate form on mount so values survive navigation.
   useEffect(() => {
@@ -154,7 +231,14 @@ export default function AlignPage() {
         <LabeledInput label="Operator hint" value={hint} onChange={setHint} />
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <button
+          onClick={fetchLive}
+          disabled={fetching}
+          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-60"
+        >
+          {fetching ? "Fetching…" : "Fetch live data"}
+        </button>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
           Use AI for residual (Claude CLI)
@@ -167,6 +251,9 @@ export default function AlignPage() {
           {loading ? "Aligning…" : "Run alignment"}
         </button>
       </div>
+      {fetchStatus && (
+        <div className="text-xs opacity-75">{fetchStatus}</div>
+      )}
 
       {err && <div className="rounded border border-red-500/50 bg-red-500/10 p-3 text-sm">{err}</div>}
 

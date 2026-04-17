@@ -1,0 +1,33 @@
+name: Mirror to MasterteamSA
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  delete:
+
+concurrency:
+  group: mirror-masterteamsa
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push branches and tags to MasterteamSA
+        env:
+          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MIRROR_PAT:-}" ]; then
+            echo "MIRROR_PAT secret is not set — skipping mirror." >&2
+            exit 1
+          fi
+          git remote add mirror "https://x-access-token:${MIRROR_PAT}@github.com/MasterteamSA/pplus-ai-sync-tool.git"
+          git push mirror --all --force
+          git push mirror --tags --force

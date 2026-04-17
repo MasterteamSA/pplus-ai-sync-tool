@@ -28,5 +28,8 @@ export async function POST(req: Request) {
 
   const connector = new RestConnector({ label, baseUrl, auth });
   const result = await connector.testConnection();
-  return NextResponse.json(result, { status: result.ok ? 200 : 502 });
+  return NextResponse.json(
+    { ...result, normalizedBaseUrl: connector.baseUrl },
+    { status: result.ok ? 200 : 502 },
+  );
 }

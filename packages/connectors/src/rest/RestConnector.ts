@@ -12,7 +12,12 @@ function stableHash(value: unknown): string {
 }
 
 function buildAuthHeaders(cfg: ConnectorConfig): Record<string, string> {
-  const headers: Record<string, string> = { Accept: "application/json", ...cfg.auth.extraHeaders };
+  const headers: Record<string, string> = {
+    // Send a permissive Accept: some PPlus deployments 406 on strict application/json.
+    Accept: "application/json, text/plain, */*",
+    "X-Requested-With": "XMLHttpRequest",
+    ...cfg.auth.extraHeaders,
+  };
   if (cfg.auth.mode === "cookie" && cfg.auth.cookie) {
     headers.Cookie = cfg.auth.cookie;
   }
@@ -25,6 +30,31 @@ function buildAuthHeaders(cfg: ConnectorConfig): Record<string, string> {
   }
   return headers;
 }
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url.replace(/\/$/, "");
+  }
+}
+
+/**
+ * Paths worth probing for connection tests. Different PPlus instances expose
+ * different shapes — some have /api/user/current, some /api/me, some only
+ * return content under product-specific paths like /Home/Cards. We accept any
+ * 2xx on at least one probe; a 401/403 also counts as "reachable" since it
+ * proves the host is real and answering (just rejecting this auth).
+ */
+const CONNECTION_PROBES = [
+  "api/user/current",
+  "api/me",
+  "api/account/me",
+  "api/users/me",
+  "user/current",
+  "Home/Cards",
+  "",
+];
 
 interface RawEntity {
   id?: string | number;
@@ -64,7 +94,10 @@ export class RestConnector implements PPlusConnector {
 
   constructor(private readonly cfg: ConnectorConfig) {
     this.label = cfg.label;
-    this.baseUrl = cfg.baseUrl.replace(/\/$/, "");
+    // Normalize to origin — callers paste URLs like
+    // `https://instance.example/Home/Cards` which would otherwise get
+    // concatenated onto every request path.
+    this.baseUrl = originOf(cfg.baseUrl);
     this.queue = new PQueue({ concurrency: cfg.concurrency ?? 4 });
     this.http = ky.create({
       prefixUrl: this.baseUrl,
@@ -82,15 +115,51 @@ export class RestConnector implements PPlusConnector {
     });
   }
 
-  async testConnection(): Promise<{ ok: boolean; user?: string; error?: string }> {
-    try {
-      const res = await this.http.get("api/me", { throwHttpErrors: false });
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-      const body = (await res.json().catch(() => null)) as { username?: string } | null;
-      return body?.username ? { ok: true, user: body.username } : { ok: true };
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
+  async testConnection(): Promise<{ ok: boolean; user?: string; probed?: string; status?: number; error?: string }> {
+    let lastReachable: { status: number; probed: string } | null = null;
+    for (const path of CONNECTION_PROBES) {
+      try {
+        const res = await this.http.get(path, { throwHttpErrors: false, retry: 0 });
+        // 2xx = verified with this auth. 401/403 = host reachable but auth rejected.
+        if (res.ok) {
+          const ct = res.headers.get("content-type") ?? "";
+          // A 200 that returns HTML is almost always a login redirect page.
+          // Treat that as reachable-but-unverified so we don't falsely succeed.
+          if (ct.includes("text/html")) {
+            lastReachable = { status: res.status, probed: path || "/" };
+            continue;
+          }
+          const body = (await res.json().catch(() => null)) as
+            | { username?: string; userName?: string; email?: string; name?: string }
+            | null;
+          const user = body?.username ?? body?.userName ?? body?.email ?? body?.name;
+          return user
+            ? { ok: true, user, probed: path || "/", status: res.status }
+            : { ok: true, probed: path || "/", status: res.status };
+        }
+        if (res.status === 401 || res.status === 403) {
+          return {
+            ok: false,
+            probed: path || "/",
+            status: res.status,
+            error: `HTTP ${res.status} — host reached, credentials were rejected`,
+          };
+        }
+        lastReachable = { status: res.status, probed: path || "/" };
+      } catch (e) {
+        // network / DNS — try next path; if they all fail we'll report below.
+        void e;
+      }
     }
+    if (lastReachable) {
+      return {
+        ok: false,
+        probed: lastReachable.probed,
+        status: lastReachable.status,
+        error: `HTTP ${lastReachable.status} — host answered but none of the probe endpoints exist on this instance. Use "Test connection" only as a heuristic; the real connector probes run at snapshot time.`,
+      };
+    }
+    return { ok: false, error: `host ${this.baseUrl} unreachable or blocked` };
   }
 
   async *snapshot(kinds: EntityKind[]): AsyncIterable<Entity> {

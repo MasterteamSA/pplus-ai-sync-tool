@@ -60,12 +60,29 @@ export default function ConnectPage() {
           secret: row.secret,
         }),
       });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; user?: string };
-      if (res.ok && body.ok) {
-        setRow({ ...row, status: "ok", statusDetail: body.user ?? "connected" });
-      } else {
-        setRow({ ...row, status: "error", statusDetail: body.error ?? `HTTP ${res.status}` });
-      }
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        user?: string;
+        probed?: string;
+        status?: number;
+        normalizedBaseUrl?: string;
+      };
+      const normalized = body.normalizedBaseUrl && body.normalizedBaseUrl !== row.baseUrl
+        ? { baseUrl: body.normalizedBaseUrl }
+        : {};
+      const detailParts: string[] = [];
+      if (body.user) detailParts.push(`signed in as ${body.user}`);
+      if (body.probed) detailParts.push(`probe: ${body.probed}`);
+      if (body.status) detailParts.push(`HTTP ${body.status}`);
+      if (body.error) detailParts.push(body.error);
+      const detail = detailParts.join(" · ") || (body.ok ? "connected" : "unknown error");
+      setRow({
+        ...row,
+        ...normalized,
+        status: body.ok ? "ok" : "error",
+        statusDetail: detail,
+      });
     } catch (e) {
       setRow({ ...row, status: "error", statusDetail: (e as Error).message });
     }

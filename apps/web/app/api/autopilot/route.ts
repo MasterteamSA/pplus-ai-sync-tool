@@ -343,6 +343,63 @@ export async function POST(req: Request) {
                 ...(res.newId ? { newId: res.newId } : {}),
                 attempt,
               });
+              // Dashboard-specific post-create hook: the metadata POST only
+              // creates the shell. The chart grid lives at
+              // payload.charts.configration and must be POSTed separately
+              // to /Dashboards/Charts/Link, else the target dashboard
+              // appears empty.
+              if (
+                op.op === "create" &&
+                op.kind === "dashboard" &&
+                res.newId &&
+                op.sourceEntity?.payload
+              ) {
+                const srcPayload = op.sourceEntity.payload as {
+                  charts?: { configration?: string };
+                };
+                const configration = srcPayload.charts?.configration;
+                if (configration) {
+                  try {
+                    const linkUrl = `${input.target.baseUrl.replace(/\/$/, "")}/service/api/Dashboards/Charts/Link`;
+                    const linkRes = await fetch(linkUrl, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        Authorization: `Bearer ${input.target.secret}`,
+                        ...(input.target.csr ? { csr: input.target.csr } : { csr: "1" }),
+                      },
+                      body: JSON.stringify({ DashboardId: String(res.newId), configration }),
+                    });
+                    if (linkRes.ok) {
+                      await send({
+                        type: "op",
+                        phase: "apply",
+                        msg: `✓ ${op.label} — charts linked`,
+                        opId: `${op.id}:link`,
+                        result: "ok",
+                      });
+                    } else {
+                      await send({
+                        type: "op",
+                        phase: "apply",
+                        msg: `✗ ${op.label} — charts NOT linked (HTTP ${linkRes.status})`,
+                        opId: `${op.id}:link`,
+                        result: "fail",
+                      });
+                    }
+                  } catch (e) {
+                    await send({
+                      type: "op",
+                      phase: "apply",
+                      msg: `✗ ${op.label} — charts link errored: ${(e as Error).message}`,
+                      opId: `${op.id}:link`,
+                      result: "fail",
+                    });
+                  }
+                }
+              }
               break;
             }
 

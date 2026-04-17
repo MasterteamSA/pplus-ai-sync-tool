@@ -1,23 +1,18 @@
 import { z } from "zod";
 
 export const entityKindSchema = z.enum([
-  "level",
-  "log",
-  "property",
-  "propertyStatus",
-  "phaseGate",
-  "lookup",
-  "workflow",
-  "dashboard",
-  "chartComponent",
-  "source",
-  "processBuilder",
-  "approvalProcess",
-  "role",
-  "escalation",
-  "procurement",
-  "cardConfig",
-  "levelStatus",
+  // Hierarchy & data model
+  "level", "log", "property", "logProperty", "levelSection",
+  "propertyStatus", "levelStatus", "phaseGate", "lookup", "source",
+  // Per-level admin sections
+  "levelAttachedLogs", "role", "escalation", "procurement",
+  "cardConfig", "processBuilder", "approvalProcess", "codeBuilder",
+  "notification", "workflow",
+  // Dashboards
+  "dashboard", "chartComponent",
+  // Global admin
+  "user", "group", "setting", "holiday", "accessibility",
+  "classification", "scheduleView", "delegation",
 ]);
 
 export const authModeSchema = z.enum(["cookie", "bearer", "basic"]);
@@ -44,21 +39,34 @@ export const createRunSchema = z.object({
 });
 
 export const ENTITY_PRESETS: Record<string, z.infer<typeof entityKindSchema>[]> = {
-  "Schema only": ["level", "log", "property", "propertyStatus", "phaseGate", "lookup"],
+  "Schema only": [
+    "level", "log", "property", "logProperty", "levelSection",
+    "propertyStatus", "levelStatus", "phaseGate", "lookup",
+  ],
   "Schema + Admin": [
-    "level", "log", "property", "propertyStatus", "phaseGate", "lookup",
-    "processBuilder", "approvalProcess", "role", "escalation", "procurement",
-    "cardConfig", "levelStatus",
+    "level", "log", "property", "logProperty", "levelSection",
+    "propertyStatus", "levelStatus", "phaseGate", "lookup",
+    "levelAttachedLogs", "role", "escalation", "procurement",
+    "cardConfig", "processBuilder", "approvalProcess", "codeBuilder",
+    "notification",
   ],
   "Schema + Dashboards": [
-    "level", "log", "property", "propertyStatus", "phaseGate", "lookup",
-    "dashboard", "chartComponent",
+    "level", "log", "property", "logProperty", "propertyStatus", "phaseGate",
+    "lookup", "dashboard", "chartComponent",
+  ],
+  "Global admin": [
+    "user", "group", "setting", "holiday", "accessibility",
+    "classification", "scheduleView", "delegation", "workflow",
   ],
   Everything: [
-    "level", "log", "property", "propertyStatus", "phaseGate", "lookup",
-    "workflow", "dashboard", "chartComponent", "source",
-    "processBuilder", "approvalProcess", "role", "escalation", "procurement",
-    "cardConfig", "levelStatus",
+    "level", "log", "property", "logProperty", "levelSection",
+    "propertyStatus", "levelStatus", "phaseGate", "lookup", "source",
+    "levelAttachedLogs", "role", "escalation", "procurement",
+    "cardConfig", "processBuilder", "approvalProcess", "codeBuilder",
+    "notification", "workflow",
+    "dashboard", "chartComponent",
+    "user", "group", "setting", "holiday", "accessibility",
+    "classification", "scheduleView", "delegation",
   ],
 };
 

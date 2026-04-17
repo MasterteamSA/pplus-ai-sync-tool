@@ -1,22 +1,41 @@
 export const ENTITY_KINDS = [
-  "level",
-  "log",
-  "property",
-  "propertyStatus",
-  "phaseGate",
-  "lookup",
-  "workflow",
-  "dashboard",
-  "chartComponent",
-  "source",
-  // Per-level admin sections (travel with each Level):
-  "processBuilder",  // /admin/level-managment/{id}/process-builder
-  "approvalProcess", // /admin/level-managment/{id}/manage-approval
-  "role",            // /admin/level-managment/{id}/roles
-  "escalation",      // /admin/level-managment/{id}/manage-escalation
-  "procurement",     // /admin/level-managment/{id}/manage-procurment
-  "cardConfig",      // /admin/level-managment/{id}/customize
-  "levelStatus",     // /admin/level-managment/{id}/statuses/{groupId}
+  // ── Hierarchy & data model ──
+  "level",           // /api/Levels                — level definitions
+  "log",             // /api/Logs                  — log-type definitions
+  "property",        // /api/Levels/{id}/Properties — level properties
+  "logProperty",     // /api/Logs/{id}/Properties   — log properties (per-log)
+  "levelSection",    // /api/Levels/{id}/Sections   — property groupings
+  "propertyStatus",  // /api/properties/{schemaId}/Status — status values
+  "levelStatus",     // /api/Levels/{id}/Statuses   — per-level statuses/colors
+  "phaseGate",       // /api/Levels/{id}/PhaseGates
+  "lookup",          // /api/Lookups               — ~40 lookup lists
+  "source",          // /api/source                — Level.Sources (legacy kept)
+
+  // ── Per-level admin sections ──
+  "levelAttachedLogs", // /api/Levels/{id}/Logs      — which logs bind to a level
+  "role",              // /api/Levels/{id}/Roles
+  "escalation",        // /api/Levels/{id}/Escalation
+  "procurement",       // /api/Levels/{id}/Procurement
+  "cardConfig",        // /api/Levels/{id}/CardsManagement
+  "processBuilder",    // /api/Levels/{id}/ProcessBuilder
+  "approvalProcess",   // /api/Levels/{id}/Approvals
+  "codeBuilder",       // /api/Levels/{id}/Code
+  "notification",      // /api/Levels/{id}/Notifications
+  "workflow",          // /api/workflow + level-attached workflows
+
+  // ── Dashboards ──
+  "dashboard",       // /api/Dashboards
+  "chartComponent",  // /api/component/chart
+
+  // ── Global admin ──
+  "user",            // /api/Users
+  "group",           // /api/Groups
+  "setting",         // /api/Settings (identity, colors, images, SMTP)
+  "holiday",         // /api/Holidays
+  "accessibility",   // /api/Accessibilities (permission groups, categories, landing)
+  "classification",  // /api/Classification/risks, /api/Classification/issues
+  "scheduleView",    // /api/ScheduleViews
+  "delegation",      // /api/Delegations
 ] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];

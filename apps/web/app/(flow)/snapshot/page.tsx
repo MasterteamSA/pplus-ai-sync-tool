@@ -8,42 +8,67 @@ type EntityKind = (typeof entityKindSchema._def.values)[number];
 const ALL_KINDS: readonly EntityKind[] = entityKindSchema._def.values;
 
 const KIND_LABELS: Record<EntityKind, { label: string; hint: string }> = {
-  level: { label: "Levels", hint: "Hierarchical units (Site, Initiative, Project…)" },
-  log: { label: "Logs", hint: "Activity/event logs attached to levels" },
-  property: { label: "Properties", hint: "Configurable fields on levels and logs" },
-  propertyStatus: { label: "Property statuses", hint: "Statuses / colors per property" },
-  phaseGate: { label: "Phase gates", hint: "Workflow gates with items" },
-  lookup: { label: "Lookups", hint: "Dropdown / reference data" },
-  workflow: { label: "Workflows", hint: "State-machine definitions" },
-  dashboard: { label: "Dashboards", hint: "Dashboard layouts and filter config" },
-  chartComponent: { label: "Chart components", hint: "Chart widgets used on dashboards" },
+  // Hierarchy & data model
+  level: { label: "Levels", hint: "Hierarchical units (Portfolio → Program → Project)" },
+  log: { label: "Logs", hint: "Log-type definitions (Tasks, Risks, Issues, 20+ types)" },
+  property: { label: "Level properties", hint: "Properties defined on each level type" },
+  logProperty: { label: "Log properties", hint: "Properties defined on each log type (per-log)" },
+  levelSection: { label: "Level sections", hint: "Groupings of properties into named sections" },
+  propertyStatus: { label: "Property statuses", hint: "Status values + colors per status property" },
+  levelStatus: { label: "Level statuses", hint: "Per-level status colors + C# formulas" },
+  phaseGate: { label: "Phase gates", hint: "Lifecycle phases + allowed processes per phase" },
+  lookup: { label: "Lookups", hint: "All ~40 lookup lists (risks, issues, procurement…)" },
   source: { label: "Sources", hint: "Level data-source bindings" },
-  // Per-level admin sections
-  processBuilder: { label: "Process builder", hint: "Workflow step definitions per level" },
-  approvalProcess: { label: "Approval processes", hint: "~50 approval toggles per level" },
-  role: { label: "Roles & permissions", hint: "RBAC roles and module permissions" },
-  escalation: { label: "Escalation chains", hint: "SLA-based escalation rules" },
-  procurement: { label: "Procurement stages", hint: "Procurement flow & contract stages" },
-  cardConfig: { label: "Cards management", hint: "Which fields appear on dashboard cards" },
-  levelStatus: { label: "Level statuses", hint: "Per-level status colors & formulas" },
+  // Per-level admin
+  levelAttachedLogs: { label: "Manage logs", hint: "Which log types attach to each level" },
+  role: { label: "Roles & permissions", hint: "Per-level roles + module permission matrix" },
+  escalation: { label: "Escalation chains", hint: "SLA-based escalation rules per level" },
+  procurement: { label: "Procurement stages", hint: "Procurement flow + contract stages" },
+  cardConfig: { label: "Cards management", hint: "Which fields appear on level cards (Card + Workspace + Logs sub-tabs)" },
+  processBuilder: { label: "Process builder", hint: "Multi-step workflow processes per level" },
+  approvalProcess: { label: "Manage approvals", hint: "~50 approval toggles (Create/Update/Delete per entity)" },
+  codeBuilder: { label: "Code builder", hint: "Auto-code pattern per level (e.g. PF-{n}-YYYY)" },
+  notification: { label: "Notifications", hint: "Trigger events + email templates per level" },
+  workflow: { label: "Workflows", hint: "State-machine workflow definitions" },
+  // Dashboards
+  dashboard: { label: "Dashboards", hint: "Dashboard layouts + filter config + chart bindings" },
+  chartComponent: { label: "Chart components", hint: "Chart widgets referenced by dashboards" },
+  // Global admin
+  user: { label: "Users", hint: "Account records (email, username, hour rate, IDs)" },
+  group: { label: "Groups", hint: "User groups (~15: admin, PMO, Delivery Managers…)" },
+  setting: { label: "Manage settings", hint: "Identity, colors, logos, SMTP, timezone, currency" },
+  holiday: { label: "Holidays", hint: "Holiday list affecting schedule calculations" },
+  accessibility: { label: "Accessibilities", hint: "8 permission groups + categories + landing page" },
+  classification: { label: "Classification", hint: "5×5 risk matrix + issue classification" },
+  scheduleView: { label: "Schedule views", hint: "Column configurations for the Gantt view" },
+  delegation: { label: "Delegations", hint: "Approval-authority delegations between users" },
 };
 
 const GROUPS: { title: string; kinds: EntityKind[] }[] = [
-  { title: "Schema", kinds: ["level", "log", "property", "propertyStatus", "phaseGate", "lookup", "source"] },
+  {
+    title: "Schema",
+    kinds: [
+      "level", "log", "property", "logProperty", "levelSection",
+      "propertyStatus", "levelStatus", "phaseGate", "lookup", "source",
+    ],
+  },
   {
     title: "Per-level admin",
     kinds: [
-      "processBuilder",
-      "approvalProcess",
-      "role",
-      "escalation",
-      "procurement",
-      "cardConfig",
-      "levelStatus",
+      "levelAttachedLogs", "role", "escalation", "procurement",
+      "cardConfig", "processBuilder", "approvalProcess", "codeBuilder",
+      "notification",
     ],
   },
   { title: "Workflow", kinds: ["workflow"] },
   { title: "Dashboards", kinds: ["dashboard", "chartComponent"] },
+  {
+    title: "Global admin",
+    kinds: [
+      "user", "group", "setting", "holiday", "accessibility",
+      "classification", "scheduleView", "delegation",
+    ],
+  },
 ];
 
 const STORAGE_KEY = "pplus-sync:selectedKinds";

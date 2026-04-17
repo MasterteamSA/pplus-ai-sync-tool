@@ -1,166 +1,303 @@
 import type { EntityKind } from "@pplus-sync/core";
 
 /**
- * Frozen map of PPlus REST endpoints. Paths validated against the
- * MasterteamSA/pplus4-backend controllers at scaffold time; adjust per
- * instance as needed (some deployments prefix /api differently).
+ * Real PPlus REST endpoints for every sync-able configuration surface.
  *
- * `list`   → GET, returns an array of this kind
- * `byId`   → GET, returns a single entity
- * `create` → POST
- * `update` → PUT
- * `delete` → DELETE
+ * Base path: all paths resolve under the origin (e.g. https://inst.example)
+ * and typically route through `/service/api/...`; the connector accepts
+ * both `/service/api/...` and `/api/...` style paths thanks to
+ * originOf(baseUrl) + per-instance redirects. Paths captured from
+ * knowledge chunks admin-overview and admin-remaining-tabs.
  *
- * The `csr` header requirement for chart endpoints is honored by RestConnector
- * via AuthConfig.extraHeaders.
+ * Scopes:
+ *   - global:  one call per instance
+ *   - perLevel: iterate over captured Levels; {levelId} is substituted
+ *   - perLog:  iterate over captured Logs;   {logId}   is substituted
  */
+
+export type Scope = "global" | "perLevel" | "perLog";
+
 export interface EndpointSet {
   list: string;
   byId: (id: string) => string;
   create: string;
   update: (id: string) => string;
   delete: (id: string) => string;
-  /** Headers required beyond auth — per `dashboard_dialog_building_guide.md`. */
+  /** Headers required beyond auth (e.g. `csr` for chart endpoints). */
   headers?: Record<string, string>;
-  /**
-   * True for entity kinds that are scoped to a parent Level. The connector
-   * will snapshot Levels first, then iterate calling list / byId with each
-   * level id substituted into {levelId}.
-   */
+  scope: Scope;
+  /** Kept for backwards compatibility with older connector code paths. */
   perLevel?: boolean;
 }
 
+const L = "/service/api";
+
+const level = (path: string): string => `${L}/Levels/{levelId}${path}`;
+const log = (path: string): string => `${L}/Logs/{logId}${path}`;
+
 export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
+  // ── Hierarchy & data model ────────────────────────────────────────────
   level: {
-    list: "/service/api/level",
-    byId: (id) => `/service/api/level/${id}`,
-    create: "/service/api/level",
-    update: (id) => `/service/api/level/${id}`,
-    delete: (id) => `/service/api/level/${id}`,
+    list: `${L}/Levels`,
+    byId: (id) => `${L}/Levels/${id}`,
+    create: `${L}/Levels`,
+    update: (id) => `${L}/Levels/${id}`,
+    delete: (id) => `${L}/Levels/${id}`,
+    scope: "global",
   },
   log: {
-    list: "/service/api/log",
-    byId: (id) => `/service/api/log/${id}`,
-    create: "/service/api/log",
-    update: (id) => `/service/api/log/${id}`,
-    delete: (id) => `/service/api/log/${id}`,
+    list: `${L}/Logs`,
+    byId: (id) => `${L}/Logs/${id}`,
+    create: `${L}/Logs`,
+    update: (id) => `${L}/Logs/${id}`,
+    delete: (id) => `${L}/Logs/${id}`,
+    scope: "global",
   },
   property: {
-    list: "/service/api/property",
-    byId: (id) => `/service/api/property/${id}`,
-    create: "/service/api/property",
-    update: (id) => `/service/api/property/${id}`,
-    delete: (id) => `/service/api/property/${id}`,
+    list: level("/Properties"),
+    byId: (id) => `${L}/Properties/${id}`,
+    create: level("/Properties"),
+    update: (id) => `${L}/Properties/${id}`,
+    delete: (id) => `${L}/Properties/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  logProperty: {
+    list: log("/Properties"),
+    byId: (id) => `${L}/LogProperties/${id}`,
+    create: log("/Properties"),
+    update: (id) => `${L}/LogProperties/${id}`,
+    delete: (id) => `${L}/LogProperties/${id}`,
+    scope: "perLog",
+  },
+  levelSection: {
+    list: level("/Sections"),
+    byId: (id) => `${L}/Sections/${id}`,
+    create: level("/Sections"),
+    update: (id) => `${L}/Sections/${id}`,
+    delete: (id) => `${L}/Sections/${id}`,
+    scope: "perLevel",
+    perLevel: true,
   },
   propertyStatus: {
-    list: "/service/api/property-status",
-    byId: (id) => `/service/api/property-status/${id}`,
-    create: "/service/api/property-status",
-    update: (id) => `/service/api/property-status/${id}`,
-    delete: (id) => `/service/api/property-status/${id}`,
-  },
-  phaseGate: {
-    list: "/service/api/phase-gate",
-    byId: (id) => `/service/api/phase-gate/${id}`,
-    create: "/service/api/phase-gate",
-    update: (id) => `/service/api/phase-gate/${id}`,
-    delete: (id) => `/service/api/phase-gate/${id}`,
-  },
-  lookup: {
-    list: "/service/api/lookup",
-    byId: (id) => `/service/api/lookup/${id}`,
-    create: "/service/api/lookup",
-    update: (id) => `/service/api/lookup/${id}`,
-    delete: (id) => `/service/api/lookup/${id}`,
-  },
-  workflow: {
-    list: "/service/api/workflow",
-    byId: (id) => `/service/api/workflow/${id}`,
-    create: "/service/api/workflow",
-    update: (id) => `/service/api/workflow/${id}`,
-    delete: (id) => `/service/api/workflow/${id}`,
-  },
-  dashboard: {
-    list: "/service/api/dashboard",
-    byId: (id) => `/service/api/dashboard/${id}`,
-    create: "/service/api/dashboard",
-    update: (id) => `/service/api/dashboard/${id}`,
-    delete: (id) => `/service/api/dashboard/${id}`,
-    headers: { csr: "1" },
-  },
-  chartComponent: {
-    list: "/service/api/component/chart",
-    byId: (id) => `/service/api/component/chart/${id}`,
-    create: "/service/api/component/chart",
-    update: (id) => `/service/api/component/chart/${id}`,
-    delete: (id) => `/service/api/component/chart/${id}`,
-    headers: { csr: "1" },
-  },
-  source: {
-    list: "/service/api/source",
-    byId: (id) => `/service/api/source/${id}`,
-    create: "/service/api/source",
-    update: (id) => `/service/api/source/${id}`,
-    delete: (id) => `/service/api/source/${id}`,
-  },
-  // Per-level admin sections. Paths are the best educated guess based on the
-  // admin UI routes (/admin/level-managment/{id}/...); the connector lets the
-  // operator override any path in settings if a given instance differs.
-  processBuilder: {
-    list: "/service/api/level/{levelId}/processes",
-    byId: (id) => `/service/api/processes/${id}`,
-    create: "/service/api/level/{levelId}/processes",
-    update: (id) => `/service/api/processes/${id}`,
-    delete: (id) => `/service/api/processes/${id}`,
-    perLevel: true,
-  },
-  approvalProcess: {
-    list: "/service/api/level/{levelId}/approvals",
-    byId: (id) => `/service/api/approvals/${id}`,
-    create: "/service/api/level/{levelId}/approvals",
-    update: (id) => `/service/api/approvals/${id}`,
-    delete: (id) => `/service/api/approvals/${id}`,
-    perLevel: true,
-  },
-  role: {
-    list: "/service/api/level/{levelId}/roles",
-    byId: (id) => `/service/api/roles/${id}`,
-    create: "/service/api/level/{levelId}/roles",
-    update: (id) => `/service/api/roles/${id}`,
-    delete: (id) => `/service/api/roles/${id}`,
-    perLevel: true,
-  },
-  escalation: {
-    list: "/service/api/level/{levelId}/escalations",
-    byId: (id) => `/service/api/escalations/${id}`,
-    create: "/service/api/level/{levelId}/escalations",
-    update: (id) => `/service/api/escalations/${id}`,
-    delete: (id) => `/service/api/escalations/${id}`,
-    perLevel: true,
-  },
-  procurement: {
-    list: "/service/api/level/{levelId}/procurement",
-    byId: (id) => `/service/api/procurement/${id}`,
-    create: "/service/api/level/{levelId}/procurement",
-    update: (id) => `/service/api/procurement/${id}`,
-    delete: (id) => `/service/api/procurement/${id}`,
-    perLevel: true,
-  },
-  cardConfig: {
-    list: "/service/api/level/{levelId}/cards",
-    byId: (id) => `/service/api/cards/${id}`,
-    create: "/service/api/level/{levelId}/cards",
-    update: (id) => `/service/api/cards/${id}`,
-    delete: (id) => `/service/api/cards/${id}`,
+    list: `${L}/properties/{schemaId}/Status`,
+    byId: (id) => `${L}/properties/Status/${id}`,
+    create: `${L}/properties/{schemaId}/Status`,
+    update: (id) => `${L}/properties/Status/${id}`,
+    delete: (id) => `${L}/properties/Status/${id}`,
+    scope: "perLevel",
     perLevel: true,
   },
   levelStatus: {
-    list: "/service/api/level/{levelId}/statuses",
-    byId: (id) => `/service/api/statuses/${id}`,
-    create: "/service/api/level/{levelId}/statuses",
-    update: (id) => `/service/api/statuses/${id}`,
-    delete: (id) => `/service/api/statuses/${id}`,
+    list: level("/Statuses"),
+    byId: (id) => `${L}/Statuses/${id}`,
+    create: level("/Statuses"),
+    update: (id) => `${L}/Statuses/${id}`,
+    delete: (id) => `${L}/Statuses/${id}`,
+    scope: "perLevel",
     perLevel: true,
+  },
+  phaseGate: {
+    list: level("/PhaseGates"),
+    byId: (id) => `${L}/PhaseGates/${id}`,
+    create: level("/PhaseGates"),
+    update: (id) => `${L}/PhaseGates/${id}`,
+    delete: (id) => `${L}/PhaseGates/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  lookup: {
+    list: `${L}/Lookups`,
+    byId: (id) => `${L}/Lookups/${id}`,
+    create: `${L}/Lookups`,
+    update: (id) => `${L}/Lookups/${id}`,
+    delete: (id) => `${L}/Lookups/${id}`,
+    scope: "global",
+  },
+  source: {
+    list: `${L}/source`,
+    byId: (id) => `${L}/source/${id}`,
+    create: `${L}/source`,
+    update: (id) => `${L}/source/${id}`,
+    delete: (id) => `${L}/source/${id}`,
+    scope: "global",
+  },
+
+  // ── Per-level admin sections ──────────────────────────────────────────
+  levelAttachedLogs: {
+    list: level("/Logs"),
+    byId: (id) => `${L}/LevelLogs/${id}`,
+    create: level("/Logs"),
+    update: (id) => `${L}/LevelLogs/${id}`,
+    delete: (id) => `${L}/LevelLogs/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  role: {
+    list: level("/Roles"),
+    byId: (id) => `${L}/Roles/${id}`,
+    create: level("/Roles"),
+    update: (id) => `${L}/Roles/${id}`,
+    delete: (id) => `${L}/Roles/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  escalation: {
+    list: level("/Escalation"),
+    byId: (id) => `${L}/Escalation/${id}`,
+    create: level("/Escalation"),
+    update: (id) => `${L}/Escalation/${id}`,
+    delete: (id) => `${L}/Escalation/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  procurement: {
+    list: level("/Procurement"),
+    byId: (id) => `${L}/Procurement/${id}`,
+    create: level("/Procurement"),
+    update: (id) => `${L}/Procurement/${id}`,
+    delete: (id) => `${L}/Procurement/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  cardConfig: {
+    list: level("/CardsManagement"),
+    byId: (id) => `${L}/CardsManagement/${id}`,
+    create: level("/CardsManagement"),
+    update: (id) => `${L}/CardsManagement/${id}`,
+    delete: (id) => `${L}/CardsManagement/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  processBuilder: {
+    list: level("/ProcessBuilder"),
+    byId: (id) => `${L}/ProcessBuilder/${id}`,
+    create: level("/ProcessBuilder"),
+    update: (id) => `${L}/ProcessBuilder/${id}`,
+    delete: (id) => `${L}/ProcessBuilder/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  approvalProcess: {
+    list: level("/Approvals"),
+    byId: (id) => `${L}/Approvals/${id}`,
+    create: level("/Approvals"),
+    update: (id) => `${L}/Approvals/${id}`,
+    delete: (id) => `${L}/Approvals/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  codeBuilder: {
+    list: level("/Code"),
+    byId: (id) => `${L}/Code/${id}`,
+    create: level("/Code"),
+    update: (id) => `${L}/Code/${id}`,
+    delete: (id) => `${L}/Code/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  notification: {
+    list: level("/Notifications"),
+    byId: (id) => `${L}/Notifications/${id}`,
+    create: level("/Notifications"),
+    update: (id) => `${L}/Notifications/${id}`,
+    delete: (id) => `${L}/Notifications/${id}`,
+    scope: "perLevel",
+    perLevel: true,
+  },
+  workflow: {
+    list: `${L}/Workflow`,
+    byId: (id) => `${L}/Workflow/${id}`,
+    create: `${L}/Workflow`,
+    update: (id) => `${L}/Workflow/${id}`,
+    delete: (id) => `${L}/Workflow/${id}`,
+    scope: "global",
+  },
+
+  // ── Dashboards ────────────────────────────────────────────────────────
+  dashboard: {
+    list: `${L}/Dashboards`,
+    byId: (id) => `${L}/Dashboards/${id}`,
+    create: `${L}/Dashboards`,
+    update: (id) => `${L}/Dashboards/${id}`,
+    delete: (id) => `${L}/Dashboards/${id}`,
+    headers: { csr: "1" },
+    scope: "global",
+  },
+  chartComponent: {
+    list: `${L}/component/chart`,
+    byId: (id) => `${L}/component/chart/${id}`,
+    create: `${L}/component/chart`,
+    update: (id) => `${L}/component/chart/${id}`,
+    delete: (id) => `${L}/component/chart/${id}`,
+    headers: { csr: "1" },
+    scope: "global",
+  },
+
+  // ── Global admin ──────────────────────────────────────────────────────
+  user: {
+    list: `${L}/Users`,
+    byId: (id) => `${L}/Users/${id}`,
+    create: `${L}/Users`,
+    update: (id) => `${L}/Users/${id}`,
+    delete: (id) => `${L}/Users/${id}`,
+    scope: "global",
+  },
+  group: {
+    list: `${L}/Groups`,
+    byId: (id) => `${L}/Groups/${id}`,
+    create: `${L}/Groups`,
+    update: (id) => `${L}/Groups/${id}`,
+    delete: (id) => `${L}/Groups/${id}`,
+    scope: "global",
+  },
+  setting: {
+    list: `${L}/Settings`,
+    byId: (id) => `${L}/Settings/${id}`,
+    create: `${L}/Settings`,
+    update: (id) => `${L}/Settings/${id}`,
+    delete: (id) => `${L}/Settings/${id}`,
+    scope: "global",
+  },
+  holiday: {
+    list: `${L}/Holidays`,
+    byId: (id) => `${L}/Holidays/${id}`,
+    create: `${L}/Holidays`,
+    update: (id) => `${L}/Holidays/${id}`,
+    delete: (id) => `${L}/Holidays/${id}`,
+    scope: "global",
+  },
+  accessibility: {
+    list: `${L}/Accessibilities`,
+    byId: (id) => `${L}/Accessibilities/${id}`,
+    create: `${L}/Accessibilities`,
+    update: (id) => `${L}/Accessibilities/${id}`,
+    delete: (id) => `${L}/Accessibilities/${id}`,
+    scope: "global",
+  },
+  classification: {
+    list: `${L}/Classification`,
+    byId: (id) => `${L}/Classification/${id}`,
+    create: `${L}/Classification`,
+    update: (id) => `${L}/Classification/${id}`,
+    delete: (id) => `${L}/Classification/${id}`,
+    scope: "global",
+  },
+  scheduleView: {
+    list: `${L}/ScheduleViews`,
+    byId: (id) => `${L}/ScheduleViews/${id}`,
+    create: `${L}/ScheduleViews`,
+    update: (id) => `${L}/ScheduleViews/${id}`,
+    delete: (id) => `${L}/ScheduleViews/${id}`,
+    scope: "global",
+  },
+  delegation: {
+    list: `${L}/Delegations`,
+    byId: (id) => `${L}/Delegations/${id}`,
+    create: `${L}/Delegations`,
+    update: (id) => `${L}/Delegations/${id}`,
+    delete: (id) => `${L}/Delegations/${id}`,
+    scope: "global",
   },
 };
 

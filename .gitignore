@@ -17,3 +17,4 @@ coverage
 # Local run artifacts
 /artifacts
 /snapshots
+pplus-ai-sync-tool/

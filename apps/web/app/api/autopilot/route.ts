@@ -23,13 +23,13 @@ const body = z.object({
   kinds: z.array(entityKindSchema).min(1),
   limitPerKind: z.number().int().min(1).max(500).default(200),
   /**
-   * Hard ceiling on AI repair attempts per op. The loop terminates early
-   * when Claude returns `ok:false` twice in a row (clear give-up) or when
-   * the same error repeats with no forward progress.
+   * Hard ceiling on AI repair attempts per op. The loop also terminates
+   * when Claude returns `ok:false` `maxStall` times in a row. Bumped to
+   * 40 because users demand "no failed operation" — we keep trying hard.
    */
-  maxAiRetries: z.number().int().min(0).max(50).default(20),
+  maxAiRetries: z.number().int().min(0).max(100).default(40),
   /** Max consecutive "no safe fix" returns from Claude before we stop. */
-  maxStall: z.number().int().min(1).max(5).default(2),
+  maxStall: z.number().int().min(1).max(10).default(3),
   dryRun: z.boolean().default(false),
   // Safe-mode defaults: never touch system records, never delete on target,
   // never re-write existing entities. Flip them explicitly to broaden scope.
@@ -350,11 +350,12 @@ export async function POST(req: Request) {
             lastError = res.error ?? "unknown";
 
             // Only hard stop for explicit server refusals — method-not-allowed
-            // or policy text. Validation / schema errors stay in the loop.
+            // or policy text. Everything else (validation, schema, network,
+            // 500s) stays in the loop. Claude can still propose altPaths on
+            // network errors (maybe the hostname is wrong, maybe the path is).
             const refusalText = /not allowed|not permitted|forbidden|غير مسموح/i.test(lastError);
             const isMethodNotAllowed = /HTTP\s+405/.test(lastError);
-            const isNetworkError = /^NETWORK/.test(lastError);
-            const isProtected = isMethodNotAllowed || refusalText || isNetworkError;
+            const isProtected = isMethodNotAllowed || refusalText;
 
             await send({
               type: "op",

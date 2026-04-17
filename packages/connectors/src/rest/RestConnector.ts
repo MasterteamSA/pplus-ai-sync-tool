@@ -283,25 +283,43 @@ export class RestConnector implements PPlusConnector {
         }
         return { res: res!, body, errText: raw, networkError: null as Error | null };
       } catch (err) {
-        // fetch failed (DNS, TLS, connection refused, …). Return a synthetic
-        // response so the caller can handle it uniformly instead of throwing.
+        // fetch failed (DNS, TLS, connection refused, …). Node wraps the
+        // real reason in err.cause — unwrap it so the message is actionable.
+        const e = err as Error & { cause?: unknown };
+        const cause = e.cause as { code?: string; message?: string; errno?: number; name?: string } | undefined;
+        const detail = cause?.code
+          ? `${cause.code}${cause.message ? ": " + cause.message : ""}`
+          : cause?.message ?? e.message;
+        const url = `${this.baseUrl}/${cleaned}`;
         return {
           res: null as unknown as Response,
           body: null,
-          errText: `NETWORK ${(err as Error).message}`,
-          networkError: err as Error,
+          errText: `NETWORK ${detail} @ ${method.toUpperCase()} ${url}`,
+          networkError: e,
         };
       }
     };
 
-    const first = await tryOne(path);
+    // Network-level failures get 3 attempts with exponential backoff
+    // (500ms, 1500ms, 3500ms) before we surface the error — catches the
+    // transient DNS/TLS hiccups that otherwise look like permanent deaths.
+    let first = await tryOne(path);
+    if (first.networkError) {
+      const delays = [500, 1500, 3500];
+      for (const d of delays) {
+        await new Promise((r) => setTimeout(r, d));
+        first = await tryOne(path);
+        if (!first.networkError) break;
+      }
+    }
     if (first.networkError) {
       return {
         ok: false,
         status: 0,
         body: null,
         pathUsed: path,
-        error: `NETWORK ${first.networkError.message} (target unreachable — check URL, DNS, VPN, or TLS cert)`,
+        // errText already includes error code + URL from tryOne.
+        error: `${first.errText} (target unreachable after 4 attempts — check URL, DNS, VPN, or TLS cert)`,
       };
     }
     if (first.res.ok) return { ok: true, status: first.res.status, body: first.body, pathUsed: path };
@@ -320,7 +338,7 @@ export class RestConnector implements PPlusConnector {
             status: 0,
             body: null,
             pathUsed: alt,
-            error: `NETWORK ${retry.networkError.message}`,
+            error: retry.errText,
           };
         }
         if (retry.res.ok) return { ok: true, status: retry.res.status, body: retry.body, pathUsed: alt };

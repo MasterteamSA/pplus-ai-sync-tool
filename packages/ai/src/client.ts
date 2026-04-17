@@ -201,6 +201,25 @@ export class AiClient {
     return { risk: parsed.risk ?? "med", reasons: parsed.reasons ?? [] };
   }
 
+  /**
+   * Direct JSON channel: sends the prompt as-is (no formula/rewriter framing)
+   * and parses the first fenced JSON block from the response.
+   */
+  async runJson<T = unknown>(prompt: string, systemPromptOverride?: string): Promise<T | null> {
+    const sys =
+      systemPromptOverride ??
+      [
+        "You are a structured-output helper.",
+        "Respond with EXACTLY one fenced ```json ... ``` block and nothing else.",
+      ].join("\n");
+    const text = await runQuery(prompt, sys, { model: this.model, cwd: this.cwd });
+    try {
+      return extractJson(text) as T;
+    } catch {
+      return null;
+    }
+  }
+
   explainDiff(catalog: CatalogSlice[], ops: unknown[]): AsyncIterable<string> {
     const sys = buildSystemPrompt(catalog);
     const prompt =

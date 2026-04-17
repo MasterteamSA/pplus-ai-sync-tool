@@ -23,6 +23,15 @@ export interface ApplyResult {
   error?: string;
 }
 
+export interface ApplyOptions {
+  /**
+   * Override the endpoint path used for this apply. Useful when Claude has
+   * proposed an alternate route (e.g. /service/api/logs/custom) after an
+   * initial attempt at the default endpoint failed.
+   */
+  overridePath?: string;
+}
+
 export interface PPlusConnector {
   readonly label: string;
   readonly baseUrl: string;
@@ -35,7 +44,7 @@ export interface PPlusConnector {
 
   fetchEntity(kind: EntityKind, id: string): Promise<Entity | null>;
 
-  applyChange(op: DiffOp): Promise<ApplyResult>;
+  applyChange(op: DiffOp, options?: ApplyOptions): Promise<ApplyResult>;
 
   /**
    * Existing PPlus notification — POST /api/configuration/sync-notification.

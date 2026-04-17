@@ -22,7 +22,7 @@ const body = z.object({
   target: envSchema,
   kinds: z.array(entityKindSchema).min(1),
   limitPerKind: z.number().int().min(1).max(500).default(200),
-  maxAiRetries: z.number().int().min(0).max(3).default(1),
+  maxAiRetries: z.number().int().min(0).max(5).default(3),
   dryRun: z.boolean().default(false),
   // Safe-mode defaults: never touch system records, never delete on target,
   // never re-write existing entities. Flip them explicitly to broaden scope.
@@ -30,6 +30,14 @@ const body = z.object({
   includeDeletes: z.boolean().default(false),
   includeUpdates: z.boolean().default(false),
 });
+
+/**
+ * Kinds that are structurally un-syncable via flat CRUD (they exist, but
+ * PPlus manages them through tree/specialty endpoints that need more
+ * context). Hard-ban regardless of includeBuiltins. Flipping the toggle
+ * won't emit ops for these — keeps 405s out of the log.
+ */
+const NEVER_SYNCABLE_KINDS = new Set<string>(["level", "accessibility", "setting", "delegation", "holiday"]);
 
 /**
  * Detect "system/built-in" records so we never mutate them. Heuristics come
@@ -45,7 +53,6 @@ function isBuiltin(kind: string, entity: { payload?: unknown }): boolean {
   if (kind === "log" && p.type === 1) return true;
   if (kind === "log" && typeof p.id === "number" && p.id <= 12) return true;
   if (kind === "lookup" && typeof p.id === "number" && (p.id as number) < 1000) return true;
-  if (kind === "level") return true; // Levels are hierarchical; handled differently.
   return false;
 }
 
@@ -172,7 +179,18 @@ export async function POST(req: Request) {
         let skippedBuiltin = 0;
         let skippedUpdate = 0;
         let skippedDelete = 0;
+        let skippedUnsyncable = 0;
         for (const kind of input.kinds) {
+          if (NEVER_SYNCABLE_KINDS.has(kind)) {
+            skippedUnsyncable += (srcByKind[kind]?.length ?? 0);
+            await send({
+              type: "status",
+              phase: "diff",
+              msg: `↷ ${kind}: not syncable via flat CRUD — skipped entirely`,
+              kind,
+            });
+            continue;
+          }
           const src = srcByKind[kind] ?? [];
           const tgt = tgtByKind[kind] ?? [];
           const byId = new Map(tgt.map((t) => [t.id, t] as const));
@@ -275,19 +293,23 @@ export async function POST(req: Request) {
           await send({ type: "op", phase: "apply", msg: `→ ${op.label}`, opId: op.id });
           let attempt = 0;
           let payload = op.payload;
+          let overridePath: string | undefined;
           let lastError = "";
           let ok = false;
           const priorAttempts: string[] = [];
           while (attempt <= input.maxAiRetries) {
-            const res = await tgtConn.applyChange({
-              id: op.id,
-              op: op.op,
-              kind: op.kind as never,
-              risk: "low",
-              ...(op.sourceId ? { sourceId: op.sourceId } : {}),
-              ...(op.targetId ? { targetId: op.targetId } : {}),
-              ...(payload !== undefined ? { after: payload } : {}),
-            });
+            const res = await tgtConn.applyChange(
+              {
+                id: op.id,
+                op: op.op,
+                kind: op.kind as never,
+                risk: "low",
+                ...(op.sourceId ? { sourceId: op.sourceId } : {}),
+                ...(op.targetId ? { targetId: op.targetId } : {}),
+                ...(payload !== undefined ? { after: payload } : {}),
+              },
+              overridePath ? { overridePath } : undefined,
+            );
             if (res.ok) {
               ok = true;
               await send({
@@ -302,11 +324,13 @@ export async function POST(req: Request) {
               break;
             }
             lastError = res.error ?? "unknown";
-            // Certain errors mean the op will never succeed regardless of
-            // payload shape — stop immediately instead of burning AI turns.
-            const isProtected =
-              /HTTP\s+(405|422)/.test(lastError) ||
-              /not allowed|غير مسموح|not permitted/i.test(lastError);
+            // Fast-skip only for clear server refusals (method-not-allowed,
+            // explicit "not allowed" text). Validation errors (422/400 with
+            // "required"/"empty"/"invalid") are recoverable — let Claude
+            // keep trying.
+            const refusalText = /not allowed|not permitted|forbidden|غير مسموح/i.test(lastError);
+            const isMethodNotAllowed = /HTTP\s+405/.test(lastError);
+            const isProtected = isMethodNotAllowed || refusalText;
             await send({
               type: "op",
               phase: "apply",
@@ -336,9 +360,11 @@ export async function POST(req: Request) {
               await send({ type: "ai", phase: "apply", msg: `Claude: no safe fix — ${fix.reason}`, opId: op.id });
               break;
             }
-            await send({ type: "ai", phase: "apply", msg: `Claude: ${fix.reason}`, opId: op.id });
-            priorAttempts.push(fix.reason);
+            const pathNote = fix.altPath ? ` · altPath=${fix.altPath}` : "";
+            await send({ type: "ai", phase: "apply", msg: `Claude: ${fix.reason}${pathNote}`, opId: op.id });
+            priorAttempts.push(fix.reason + (fix.altPath ? ` (tried altPath=${fix.altPath})` : ""));
             payload = fix.payload;
+            overridePath = fix.altPath;
             attempt++;
           }
           if (ok) applied++;

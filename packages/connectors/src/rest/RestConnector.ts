@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import type { DiffOp, Entity, EntityKind } from "@pplus-sync/core";
 
-import type { ApplyResult, ConnectorConfig, PPlusConnector } from "../interface";
+import type { ApplyOptions, ApplyResult, ConnectorConfig, PPlusConnector } from "../interface";
 import { ENDPOINTS, NOTIFY_SYNC } from "./endpoints";
 
 function stableHash(value: unknown): string {
@@ -313,11 +313,13 @@ export class RestConnector implements PPlusConnector {
     };
   }
 
-  async applyChange(op: DiffOp): Promise<ApplyResult> {
+  async applyChange(op: DiffOp, options: ApplyOptions = {}): Promise<ApplyResult> {
     const endpoint = ENDPOINTS[op.kind];
     const extra = endpoint.headers ?? {};
+    const override = options.overridePath;
     if (op.op === "create") {
-      const r = await this.withPathFallback<RawEntity>(endpoint.create, extra, op.after, "post");
+      const path = override ?? endpoint.create;
+      const r = await this.withPathFallback<RawEntity>(path, extra, op.after, "post");
       if (!r.ok) return { ok: false, error: r.error ?? `HTTP ${r.status}` };
       return {
         ok: true,
@@ -326,13 +328,15 @@ export class RestConnector implements PPlusConnector {
     }
     if (op.op === "update" || op.op === "rewriteRef") {
       if (!op.targetId) return { ok: false, error: "update missing targetId" };
-      const r = await this.withPathFallback<RawEntity>(endpoint.update(op.targetId), extra, op.after, "put");
+      const path = override ?? endpoint.update(op.targetId);
+      const r = await this.withPathFallback<RawEntity>(path, extra, op.after, "put");
       if (!r.ok) return { ok: false, error: r.error ?? `HTTP ${r.status}` };
       return { ok: true };
     }
     if (op.op === "delete") {
       if (!op.targetId) return { ok: false, error: "delete missing targetId" };
-      const r = await this.withPathFallback<RawEntity>(endpoint.delete(op.targetId), extra, undefined, "delete");
+      const path = override ?? endpoint.delete(op.targetId);
+      const r = await this.withPathFallback<RawEntity>(path, extra, undefined, "delete");
       if (!r.ok) return { ok: false, error: r.error ?? `HTTP ${r.status}` };
       return { ok: true };
     }

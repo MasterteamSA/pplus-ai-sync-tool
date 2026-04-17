@@ -1,31 +1,191 @@
-import { ENTITY_PRESETS } from "@pplus-sync/shared";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { ENTITY_PRESETS, entityKindSchema } from "@pplus-sync/shared";
+
+type EntityKind = (typeof entityKindSchema._def.values)[number];
+
+const ALL_KINDS: readonly EntityKind[] = entityKindSchema._def.values;
+
+const KIND_LABELS: Record<EntityKind, { label: string; hint: string }> = {
+  level: { label: "Levels", hint: "Hierarchical units (Site, Initiative, Project…)" },
+  log: { label: "Logs", hint: "Activity/event logs attached to levels" },
+  property: { label: "Properties", hint: "Configurable fields on levels and logs" },
+  propertyStatus: { label: "Property statuses", hint: "Statuses / colors per property" },
+  phaseGate: { label: "Phase gates", hint: "Workflow gates with items" },
+  lookup: { label: "Lookups", hint: "Dropdown / reference data" },
+  workflow: { label: "Workflows", hint: "State-machine definitions" },
+  dashboard: { label: "Dashboards", hint: "Dashboard layouts and filter config" },
+  chartComponent: { label: "Chart components", hint: "Chart widgets used on dashboards" },
+  source: { label: "Sources", hint: "Level data-source bindings" },
+};
+
+const GROUPS: { title: string; kinds: EntityKind[] }[] = [
+  { title: "Schema", kinds: ["level", "log", "property", "propertyStatus", "phaseGate", "lookup", "source"] },
+  { title: "Workflow", kinds: ["workflow"] },
+  { title: "Dashboards", kinds: ["dashboard", "chartComponent"] },
+];
+
+const STORAGE_KEY = "pplus-sync:selectedKinds";
 
 export default function SnapshotPage() {
+  const [selected, setSelected] = useState<Set<EntityKind>>(() => new Set());
+  const [hydrated, setHydrated] = useState(false);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as EntityKind[];
+        setSelected(new Set(parsed.filter((k) => ALL_KINDS.includes(k))));
+      } else {
+        setSelected(new Set(ENTITY_PRESETS["Schema only"]));
+        setActivePreset("Schema only");
+      }
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...selected]));
+  }, [selected, hydrated]);
+
+  const toggle = (k: EntityKind) => {
+    setActivePreset(null);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+  const applyPreset = (name: string) => {
+    const kinds = ENTITY_PRESETS[name];
+    if (!kinds) return;
+    setActivePreset(name);
+    setSelected(new Set(kinds));
+  };
+  const clearAll = () => {
+    setActivePreset(null);
+    setSelected(new Set());
+  };
+
+  const counts = useMemo(() => ({
+    selected: selected.size,
+    total: ALL_KINDS.length,
+  }), [selected]);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Snapshot</h1>
         <p className="mt-2 opacity-80 max-w-2xl">
-          Pick which entity kinds to sync. Dashboards are <strong>off</strong> by
-          default — the safe path is schema-only until you opt in.
+          Pick which entity kinds to capture from the source and each target.
+          Dashboards default to <strong>off</strong> — the safe path is
+          schema-only until you opt in.
         </p>
       </div>
 
       <section className="rounded-lg border border-black/10 dark:border-white/10 p-4">
-        <div className="mb-3 text-sm opacity-75">Presets (editable in config/presets.json later):</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium">Presets</div>
+          <div className="text-xs opacity-70">Click one to replace the current selection</div>
+        </div>
         <div className="flex flex-wrap gap-2">
-          {Object.entries(ENTITY_PRESETS).map(([name, kinds]) => (
-            <div key={name} className="rounded border border-black/10 dark:border-white/10 px-3 py-2 text-sm">
-              <div className="font-medium">{name}</div>
-              <div className="opacity-70 mt-1 font-mono text-xs">{kinds.join(", ")}</div>
-            </div>
-          ))}
+          {Object.entries(ENTITY_PRESETS).map(([name, kinds]) => {
+            const active = activePreset === name;
+            return (
+              <button
+                key={name}
+                type="button"
+                onClick={() => applyPreset(name)}
+                className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                  active
+                    ? "border-ink dark:border-paper bg-ink text-paper dark:bg-paper dark:text-ink"
+                    : "border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                }`}
+              >
+                <div className="font-medium">{name}</div>
+                <div className="opacity-75 text-xs mt-0.5 font-mono">
+                  {kinds.length} kinds
+                </div>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={clearAll}
+            className="rounded-md border border-black/10 dark:border-white/10 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            Clear all
+          </button>
         </div>
       </section>
 
-      <p className="text-sm opacity-60">
-        Per-run selection UI + capture execution lands in the pipeline implementation pass.
-      </p>
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Entity kinds</h2>
+          <div className="text-xs opacity-70">
+            {counts.selected} / {counts.total} selected
+          </div>
+        </div>
+
+        {GROUPS.map((group) => (
+          <div key={group.title} className="rounded-lg border border-black/10 dark:border-white/10 p-4">
+            <div className="text-xs uppercase tracking-wide opacity-60 mb-3">{group.title}</div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {group.kinds.map((k) => {
+                const on = selected.has(k);
+                return (
+                  <label
+                    key={k}
+                    className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
+                      on
+                        ? "border-green-500/50 bg-green-500/5"
+                        : "border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggle(k)}
+                      className="mt-1"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm">{KIND_LABELS[k].label}</div>
+                      <div className="text-xs opacity-75 mt-0.5">{KIND_LABELS[k].hint}</div>
+                      <div className="text-[10px] font-mono opacity-50 mt-1">{k}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="pt-2 flex flex-wrap items-center gap-3">
+        <a
+          href="/connect"
+          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          ← Connect
+        </a>
+        <button
+          type="button"
+          disabled={counts.selected === 0}
+          onClick={() => (window.location.href = "/match")}
+          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          Continue to Match →
+        </button>
+        <span className="text-xs opacity-60">
+          Capture execution arrives with the pipeline pass; selection is persisted.
+        </span>
+      </section>
     </div>
   );
 }

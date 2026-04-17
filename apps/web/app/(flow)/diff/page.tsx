@@ -66,6 +66,7 @@ function pairEntities(
         label: `Create ${kind}: ${s.name}`,
         detail: s.key ? `key=${s.key}` : `id=${s.id}`,
         risk: riskFor("create", kind),
+        payload: s.payload ?? s,
       });
       continue;
     }
@@ -82,6 +83,7 @@ function pairEntities(
         ? `source.key=${s.key} → target.key=${match.key ?? match.id}`
         : `source ${s.id} → target ${match.id}`,
       risk: riskFor("update", kind),
+      payload: s.payload ?? s,
     });
   }
 

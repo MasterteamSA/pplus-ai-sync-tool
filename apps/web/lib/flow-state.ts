@@ -35,6 +35,8 @@ export interface DiffOp {
   label: string;
   detail: string;
   risk: "low" | "med" | "high";
+  /** Source entity payload sent to the target on create/update. */
+  payload?: unknown;
 }
 
 export interface RunRecord {

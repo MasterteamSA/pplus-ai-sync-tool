@@ -77,36 +77,73 @@ export default function ApplyPage() {
     };
     flow.addRun(record);
 
-    // Walk each selected target and simulate apply (real engine lands with
-    // the pipeline pass). Per-op delay is a small jitter so the progress
-    // bar animates convincingly.
+    let grandApplied = 0;
+    let grandFailed = 0;
+    let anyTargetFailed = false;
+
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
       if (!t || !t.selected) continue;
-      patch(i, { status: "running", progress: 0 });
-      let failed: string | undefined;
-      for (let k = 0; k < ops.length; k++) {
-        await new Promise((r) => setTimeout(r, 120 + Math.random() * 120));
-        const op = ops[k];
-        // Simulate a rare failure on high-risk deletes to exercise the path.
-        if (op && op.op === "delete" && op.risk === "high" && Math.random() < 0.15) {
-          failed = op.id;
-          break;
-        }
-        patch(i, { progress: ((k + 1) / ops.length) * 100 });
+      const envEntry = envs.targets.find((e) => e.label === t.label);
+      if (!envEntry) {
+        patch(i, { status: "failed", progress: 0, failedOpId: "no-env" });
+        anyTargetFailed = true;
+        continue;
       }
-      if (failed) {
-        patch(i, { status: "failed", failedOpId: failed });
-      } else {
-        patch(i, { status: "done", progress: 100 });
+
+      patch(i, { status: "running", progress: 0 });
+      try {
+        const res = await fetch("/api/apply", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            target: {
+              label: envEntry.label,
+              baseUrl: envEntry.baseUrl,
+              authMode: envEntry.authMode,
+              secret: envEntry.secret ?? "",
+              csr: envEntry.csr ?? "",
+            },
+            ops,
+            dryRun: false,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          applied?: number;
+          failed?: number;
+          total?: number;
+          results?: { id: string; ok: boolean; error?: string }[];
+          error?: string;
+        };
+
+        const applied = body.applied ?? 0;
+        const failed = body.failed ?? 0;
+        grandApplied += applied;
+        grandFailed += failed;
+
+        const firstFail = body.results?.find((r) => !r.ok);
+        if (!res.ok || !body.ok || firstFail) {
+          anyTargetFailed = true;
+          patch(i, {
+            status: "failed",
+            progress: ops.length ? (applied / ops.length) * 100 : 0,
+            ...(firstFail?.id ? { failedOpId: firstFail.id } : {}),
+          });
+        } else {
+          patch(i, { status: "done", progress: 100 });
+        }
+      } catch (e) {
+        anyTargetFailed = true;
+        grandFailed += 1;
+        patch(i, { status: "failed", failedOpId: `network: ${(e as Error).message}` });
       }
     }
 
-    const anyFailed = targets.some((t) => t.selected && t.status === "failed");
     flow.updateRun(runId, {
-      applied: anyFailed ? ops.length - 1 : ops.length,
-      failed: anyFailed ? 1 : 0,
-      status: anyFailed ? "failed" : "applied",
+      applied: grandApplied,
+      failed: grandFailed,
+      status: anyTargetFailed ? "failed" : "applied",
     });
     setRunning(false);
   }

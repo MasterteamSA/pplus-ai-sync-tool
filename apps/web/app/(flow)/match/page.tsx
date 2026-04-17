@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { flow, SEED_LEVELS, type MatchDecision } from "@/lib/flow-state";
+import { flow, type MatchDecision } from "@/lib/flow-state";
 
 /**
  * /match — entity-level matching between source and target. Uses the same
@@ -20,17 +20,70 @@ interface MatchResponse {
 
 export default function MatchPage() {
   const [kind, setKind] = useState<"level" | "log">("level");
-  const [source, setSource] = useState<string>(JSON.stringify(SEED_LEVELS.source, null, 2));
-  const [target, setTarget] = useState<string>(JSON.stringify(SEED_LEVELS.target, null, 2));
+  const [source, setSource] = useState<string>("");
+  const [target, setTarget] = useState<string>("");
   const [useAi, setUseAi] = useState(true);
   const [decisions, setDecisions] = useState<MatchDecision[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Hydrate from localStorage on mount so SSR markup matches the client.
   useEffect(() => {
     setDecisions(flow.getMatches());
   }, []);
+
+  async function fetchLive() {
+    const envs = flow.getEnvs();
+    const srcEnv = envs.source;
+    const tgtEnv = envs.targets?.[0];
+    if (!srcEnv?.baseUrl || !tgtEnv?.baseUrl) {
+      setErr("Configure source + at least one target in /connect first.");
+      return;
+    }
+    setFetching(true);
+    setErr(null);
+
+    async function capture(env: typeof srcEnv) {
+      const r = await fetch("/api/capture", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          label: env!.label,
+          baseUrl: env!.baseUrl,
+          authMode: env!.authMode,
+          secret: env!.secret ?? "",
+          csr: env!.csr ?? "",
+          kinds: [kind],
+          limit: 1000,
+        }),
+      });
+      const body = (await r.json()) as {
+        ok?: boolean;
+        entities?: Record<string, Array<{ id: string; key?: string; name: string }>>;
+        error?: string;
+      };
+      if (!r.ok || !body.ok) throw new Error(body.error ?? `${env!.label}: HTTP ${r.status}`);
+      return body.entities?.[kind] ?? [];
+    }
+
+    try {
+      const [s, t] = await Promise.all([capture(srcEnv), capture(tgtEnv)]);
+      setSource(JSON.stringify(s, null, 2));
+      setTarget(JSON.stringify(t, null, 2));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  function clearAll() {
+    setSource("");
+    setTarget("");
+    setDecisions([]);
+    flow.setMatches([]);
+    setErr(null);
+  }
 
   async function run() {
     setLoading(true);
@@ -89,10 +142,8 @@ export default function MatchPage() {
               key={k}
               onClick={() => {
                 setKind(k);
-                if (k === "level") {
-                  setSource(JSON.stringify(SEED_LEVELS.source, null, 2));
-                  setTarget(JSON.stringify(SEED_LEVELS.target, null, 2));
-                }
+                setSource("");
+                setTarget("");
               }}
               className={`px-3 py-1.5 ${
                 kind === k ? "bg-ink text-paper dark:bg-paper dark:text-ink" : ""
@@ -102,14 +153,27 @@ export default function MatchPage() {
             </button>
           ))}
         </div>
-        <label className="flex items-center gap-2 text-sm">
+        <button
+          onClick={fetchLive}
+          disabled={fetching}
+          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-60"
+        >
+          {fetching ? "Fetching…" : "Fetch live data"}
+        </button>
+        <button
+          onClick={clearAll}
+          className="rounded-md border border-black/10 dark:border-white/10 px-3 py-2 text-sm"
+        >
+          Clear
+        </button>
+        <label className="flex items-center gap-2 text-sm ml-auto">
           <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
           Use Claude for residual
         </label>
         <button
           onClick={run}
-          disabled={loading}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-60"
+          disabled={loading || !source.trim() || !target.trim()}
+          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium disabled:opacity-40"
         >
           {loading ? "Matching…" : "Run matching"}
         </button>

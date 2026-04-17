@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.4.4",
     "@pplus-sync/ai": "workspace:*",
     "@pplus-sync/connectors": "workspace:*",
     "@pplus-sync/core": "workspace:*",
@@ -18,6 +19,7 @@
     "@pplus-sync/formula": "workspace:*",
     "@pplus-sync/shared": "workspace:*",
     "next": "15.0.3",
+    "postgres": "^3.4.4",
     "react": "19.0.0-rc-66855b96-20241106",
     "react-dom": "19.0.0-rc-66855b96-20241106",
     "zod": "^3.23.8"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { rewriteFormula, validateRewrittenKeys } from "./rewriter.js";
-import { extractKeys } from "./parser.js";
+import { rewriteFormula, validateRewrittenKeys } from "./rewriter";
+import { extractKeys } from "./parser";
 
 describe("rewriteFormula", () => {
   it("substitutes keys listed in the map", () => {

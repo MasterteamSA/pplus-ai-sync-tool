@@ -1,5 +1,5 @@
 import { randomUUID, scryptSync, randomBytes } from "node:crypto";
-import { db, schema } from "./client.js";
+import { db, schema } from "./client";
 
 const username = process.env.SEED_USER ?? "admin";
 const password = process.env.SEED_PASSWORD ?? "admin";

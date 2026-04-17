@@ -1,6 +1,14 @@
-import type Anthropic from "@anthropic-ai/sdk";
-
-type ToolDef = Anthropic.Messages.Tool;
+/**
+ * Tool schema shapes kept as plain JSON so that the AI client can include them
+ * in prompts as structured-output guides. (Since we run via the Claude Agent
+ * SDK with the local CLI, structured output is via fenced-JSON conventions
+ * rather than native tool_use blocks.)
+ */
+export interface ToolDef {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
 
 export const proposeMappingTool: ToolDef = {
   name: "proposeMapping",

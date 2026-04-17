@@ -1,16 +1,21 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Entity, EntityKind } from "@pplus-sync/core";
-import { SYSTEM_PROMPT } from "./prompts.js";
-import {
-  TOOLS,
-  proposeMappingTool,
-  rewriteFormulaTool,
-  classifyRiskTool,
-} from "./tools.js";
+import { SYSTEM_PROMPT } from "./prompts";
+
+/**
+ * The AI layer runs via the Claude Agent SDK, which spawns the locally
+ * installed `claude` CLI. This means the tool uses whatever subscription or
+ * API key is already configured on the machine — no ANTHROPIC_API_KEY needed.
+ *
+ * For structured output we ask the model to return a single fenced JSON block
+ * and parse it. (The agent SDK's `tools` option is for built-in Claude Code
+ * tools like Read/Bash — we disable all of them since we only want text.)
+ */
 
 export interface AiClientOptions {
-  apiKey?: string;
   model?: string;
+  /** Working directory for the spawned `claude` process; defaults to cwd. */
+  cwd?: string;
 }
 
 export interface CatalogSlice {
@@ -46,155 +51,161 @@ export interface RewriteFormulaOutput {
   notes?: string;
 }
 
+function buildSystemPrompt(catalog: CatalogSlice[]): string {
+  return [
+    SYSTEM_PROMPT,
+    "",
+    "=== Normalized catalog for this run (reference only, do not modify) ===",
+    JSON.stringify(catalog),
+    "=== End catalog ===",
+    "",
+    "When asked to return structured data, reply with EXACTLY one fenced JSON",
+    "block (```json ... ```) containing the object or array described, and",
+    "nothing else outside the fence.",
+  ].join("\n");
+}
+
+function extractJson(text: string): unknown {
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/i);
+  const jsonStr = fenceMatch ? (fenceMatch[1] ?? "").trim() : text.trim();
+  return JSON.parse(jsonStr);
+}
+
+function resolveClaudeExecutable(): string | undefined {
+  const explicit = process.env.CLAUDE_CODE_EXECUTABLE ?? process.env.PPLUS_CLAUDE_PATH;
+  if (explicit) return explicit;
+  const home = process.env.HOME;
+  const candidates = [
+    home ? `${home}/.npm-global/bin/claude` : undefined,
+    home ? `${home}/.local/bin/claude` : undefined,
+    "/usr/local/bin/claude",
+    "/opt/homebrew/bin/claude",
+  ].filter((p): p is string => typeof p === "string");
+  return candidates[0];
+}
+
+async function runQuery(
+  prompt: string,
+  systemPrompt: string,
+  opts: { model: string; cwd: string | undefined },
+): Promise<string> {
+  const pathToClaudeCodeExecutable = resolveClaudeExecutable();
+  const queryOptions: Options = {
+    systemPrompt,
+    tools: [],
+    model: opts.model,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
+    settingSources: [],
+  };
+  let text = "";
+  for await (const msg of query({ prompt, options: queryOptions }) as AsyncIterable<SDKMessage>) {
+    if (msg.type === "assistant") {
+      for (const block of msg.message.content) {
+        if (block.type === "text") text += block.text;
+      }
+    }
+    if (msg.type === "result") break;
+  }
+  return text;
+}
+
+async function* streamQuery(
+  prompt: string,
+  systemPrompt: string,
+  opts: { model: string; cwd: string | undefined },
+): AsyncIterable<string> {
+  const pathToClaudeCodeExecutable = resolveClaudeExecutable();
+  const queryOptions: Options = {
+    systemPrompt,
+    tools: [],
+    model: opts.model,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
+    settingSources: [],
+  };
+  for await (const msg of query({ prompt, options: queryOptions }) as AsyncIterable<SDKMessage>) {
+    if (msg.type === "assistant") {
+      for (const block of msg.message.content) {
+        if (block.type === "text") yield block.text;
+      }
+    }
+    if (msg.type === "result") break;
+  }
+}
+
 export class AiClient {
-  private readonly client: Anthropic | null;
   private readonly model: string;
+  private readonly cwd: string | undefined;
 
   constructor(opts: AiClientOptions = {}) {
-    const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
     this.model = opts.model ?? process.env.ANTHROPIC_MODEL ?? "claude-opus-4-7";
-    this.client = apiKey ? new Anthropic({ apiKey }) : null;
-  }
-
-  get enabled(): boolean {
-    return this.client !== null;
+    this.cwd = opts.cwd;
   }
 
   /**
-   * Build a system block that pins both catalogs into the prompt cache.
-   * Reused across every tool call in a run; subsequent calls hit the 5-min
-   * ephemeral cache and pay only the delta + output.
+   * Always enabled when the `claude` CLI is on PATH. The actual check happens
+   * on first call; failures surface as caught exceptions with a clear message.
    */
-  private buildSystem(catalog: CatalogSlice[]): Anthropic.Messages.TextBlockParam[] {
-    return [
-      { type: "text", text: SYSTEM_PROMPT },
-      {
-        type: "text",
-        text: `Catalog for this run (normalized):\n${JSON.stringify(catalog)}`,
-        cache_control: { type: "ephemeral" },
-      },
-    ];
-  }
+  readonly enabled = true;
 
   async proposeMapping(
     catalog: CatalogSlice[],
     input: ProposeMappingInput,
   ): Promise<MappingProposal[]> {
-    if (!this.client) throw new Error("AI disabled: ANTHROPIC_API_KEY not set");
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 4096,
-      system: this.buildSystem(catalog),
-      tools: TOOLS,
-      tool_choice: { type: "tool", name: proposeMappingTool.name },
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `Propose mappings for kind="${input.kind}".${
-                input.hint ? `\nOperator hint: ${input.hint}` : ""
-              }\nUnmatched source:\n${JSON.stringify(input.unmatchedSource)}\nUnmatched target:\n${JSON.stringify(input.unmatchedTarget)}`,
-            },
-          ],
-        },
-      ],
-    });
-    for (const block of res.content) {
-      if (block.type === "tool_use" && block.name === proposeMappingTool.name) {
-        const parsed = block.input as { proposals?: MappingProposal[] };
-        return parsed.proposals ?? [];
-      }
-    }
-    return [];
+    const sys = buildSystemPrompt(catalog);
+    const prompt =
+      `Propose mappings for kind="${input.kind}".` +
+      (input.hint ? `\nOperator hint: ${input.hint}` : "") +
+      `\nUnmatched source (id/key/name):\n${JSON.stringify(input.unmatchedSource)}` +
+      `\nUnmatched target (id/key/name):\n${JSON.stringify(input.unmatchedTarget)}` +
+      `\n\nReturn a JSON array of { sourceId, targetId, confidence, reason }. ` +
+      `Omit any source you cannot confidently match.`;
+    const text = await runQuery(prompt, sys, { model: this.model, cwd: this.cwd });
+    const parsed = extractJson(text);
+    return Array.isArray(parsed) ? (parsed as MappingProposal[]) : [];
   }
 
   async rewriteFormula(
     catalog: CatalogSlice[],
     input: RewriteFormulaInput,
   ): Promise<RewriteFormulaOutput> {
-    if (!this.client) throw new Error("AI disabled: ANTHROPIC_API_KEY not set");
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 2048,
-      system: this.buildSystem(catalog),
-      tools: TOOLS,
-      tool_choice: { type: "tool", name: rewriteFormulaTool.name },
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `Rewrite this ${input.grammar} formula using the key map.\nFormula:\n${input.formula}\nKey map:\n${JSON.stringify(input.keyMap)}`,
-            },
-          ],
-        },
-      ],
-    });
-    for (const block of res.content) {
-      if (block.type === "tool_use" && block.name === rewriteFormulaTool.name) {
-        return block.input as RewriteFormulaOutput;
-      }
-    }
-    return { rewritten: input.formula, confidence: 0, unchanged: true, notes: "no tool output" };
+    const sys = buildSystemPrompt(catalog);
+    const prompt =
+      `Rewrite this ${input.grammar} formula so every {{Key}} reference matches the key map.\n` +
+      `Only use keys from keyMap.to values or keys already present in the original that are NOT in keyMap.from.\n` +
+      `Formula:\n${input.formula}\n\nKey map:\n${JSON.stringify(input.keyMap)}\n\n` +
+      `Return a JSON object { rewritten, confidence, unchanged, notes? }. ` +
+      `If unsafe, return the original with confidence < 0.5 and unchanged=true.`;
+    const text = await runQuery(prompt, sys, { model: this.model, cwd: this.cwd });
+    const parsed = extractJson(text) as Partial<RewriteFormulaOutput>;
+    return {
+      rewritten: parsed.rewritten ?? input.formula,
+      confidence: parsed.confidence ?? 0,
+      unchanged: parsed.unchanged ?? true,
+      ...(parsed.notes ? { notes: parsed.notes } : {}),
+    };
   }
 
   async classifyRisk(
     catalog: CatalogSlice[],
     opJson: unknown,
   ): Promise<{ risk: "low" | "med" | "high"; reasons: string[] }> {
-    if (!this.client) throw new Error("AI disabled: ANTHROPIC_API_KEY not set");
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 512,
-      system: this.buildSystem(catalog),
-      tools: TOOLS,
-      tool_choice: { type: "tool", name: classifyRiskTool.name },
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: `Classify risk for op:\n${JSON.stringify(opJson)}` },
-          ],
-        },
-      ],
-    });
-    for (const block of res.content) {
-      if (block.type === "tool_use" && block.name === classifyRiskTool.name) {
-        return block.input as { risk: "low" | "med" | "high"; reasons: string[] };
-      }
-    }
-    return { risk: "med", reasons: ["no tool output"] };
+    const sys = buildSystemPrompt(catalog);
+    const prompt =
+      `Classify the risk of this sync operation: low, med, or high.\n` +
+      `Op:\n${JSON.stringify(opJson)}\n\n` +
+      `Return a JSON object { risk: "low"|"med"|"high", reasons: string[] }.`;
+    const text = await runQuery(prompt, sys, { model: this.model, cwd: this.cwd });
+    const parsed = extractJson(text) as { risk?: "low" | "med" | "high"; reasons?: string[] };
+    return { risk: parsed.risk ?? "med", reasons: parsed.reasons ?? [] };
   }
 
-  /** Streaming explanation used by /api/ai/explain route. */
-  async *explainDiff(
-    catalog: CatalogSlice[],
-    ops: unknown[],
-  ): AsyncIterable<string> {
-    if (!this.client) throw new Error("AI disabled: ANTHROPIC_API_KEY not set");
-    const stream = this.client.messages.stream({
-      model: this.model,
-      max_tokens: 4096,
-      system: this.buildSystem(catalog),
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `Explain the following diff operations to a human operator in plain English, grouped by entity kind. Highlight any risky or unusual changes.\n${JSON.stringify(ops)}`,
-            },
-          ],
-        },
-      ],
-    });
-    for await (const event of stream) {
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        yield event.delta.text;
-      }
-    }
+  explainDiff(catalog: CatalogSlice[], ops: unknown[]): AsyncIterable<string> {
+    const sys = buildSystemPrompt(catalog);
+    const prompt =
+      `Explain the following diff operations to a human operator in plain English, grouped by entity kind. ` +
+      `Highlight risky or unusual changes. Do NOT output JSON — write prose.\n\n${JSON.stringify(ops)}`;
+    return streamQuery(prompt, sys, { model: this.model, cwd: this.cwd });
   }
 }

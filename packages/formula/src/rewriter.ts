@@ -1,4 +1,4 @@
-import { extractKeys, stringify, tokenize, type Token } from "./parser.js";
+import { extractKeys, stringify, tokenize, type Token } from "./parser";
 
 export interface KeyMap {
   [from: string]: string;

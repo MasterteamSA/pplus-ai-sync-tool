@@ -1,3 +1,3 @@
-export * from "./types.js";
-export * from "./matchers.js";
-export * from "./pipeline/index.js";
+export * from "./types";
+export * from "./matchers";
+export * from "./pipeline/index";

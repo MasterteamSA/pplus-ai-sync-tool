@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 
 import type { DiffOp, Entity, EntityKind } from "@pplus-sync/core";
 
-import type { ApplyResult, ConnectorConfig, PPlusConnector } from "../interface.js";
-import { ENDPOINTS, NOTIFY_SYNC } from "./endpoints.js";
+import type { ApplyResult, ConnectorConfig, PPlusConnector } from "../interface";
+import { ENDPOINTS, NOTIFY_SYNC } from "./endpoints";
 
 function stableHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");

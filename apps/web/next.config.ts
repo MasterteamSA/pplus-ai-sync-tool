@@ -9,6 +9,11 @@ const config: NextConfig = {
     "@pplus-sync/formula",
     "@pplus-sync/shared",
   ],
+  serverExternalPackages: [
+    "@electric-sql/pglite",
+    "@anthropic-ai/claude-agent-sdk",
+    "postgres",
+  ],
 };
 
 export default config;

@@ -1,4 +1,4 @@
-import type { Entity, EntityKind, MappingDecision } from "./types.js";
+import type { Entity, EntityKind, MappingDecision } from "./types";
 
 const normalize = (s: string): string =>
   s.toLowerCase().normalize("NFKD").replace(/[\s_-]+/g, "").replace(/[^a-z0-9]/g, "");

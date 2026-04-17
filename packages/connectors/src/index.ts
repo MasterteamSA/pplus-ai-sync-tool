@@ -1,3 +1,3 @@
-export * from "./interface.js";
-export { RestConnector } from "./rest/RestConnector.js";
-export { ENDPOINTS, NOTIFY_SYNC } from "./rest/endpoints.js";
+export * from "./interface";
+export { RestConnector } from "./rest/RestConnector";
+export { ENDPOINTS, NOTIFY_SYNC } from "./rest/endpoints";

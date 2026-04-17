@@ -196,7 +196,7 @@ export default function ConnectPage() {
           <button
             type="button"
             onClick={pasteBulk}
-            className="mt-2 rounded bg-ink text-paper dark:bg-paper dark:text-ink px-3 py-1.5 text-sm"
+            className="mt-2 rounded bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-3 py-1.5 text-sm"
           >
             Replace targets with list
           </button>
@@ -206,7 +206,7 @@ export default function ConnectPage() {
       <section className="pt-4 flex items-center gap-3">
         <a
           href="/snapshot"
-          className="inline-flex items-center rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium"
+          className="inline-flex items-center rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium"
         >
           Continue to Snapshot →
         </a>
@@ -282,11 +282,11 @@ function EnvCard({
           <select
             value={row.authMode}
             onChange={(e) => set("authMode", e.target.value as EnvRow["authMode"])}
-            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-paper text-ink dark:bg-ink dark:text-paper p-2 text-sm"
+            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-background text-foreground p-2 text-sm"
           >
-            <option value="cookie" className="bg-paper text-ink dark:bg-ink dark:text-paper">cookie</option>
-            <option value="bearer" className="bg-paper text-ink dark:bg-ink dark:text-paper">bearer</option>
-            <option value="basic" className="bg-paper text-ink dark:bg-ink dark:text-paper">basic (user:pass)</option>
+            <option value="cookie" className="bg-background text-foreground">cookie</option>
+            <option value="bearer" className="bg-background text-foreground">bearer</option>
+            <option value="basic" className="bg-background text-foreground">basic (user:pass)</option>
           </select>
         </label>
         <label className="block">

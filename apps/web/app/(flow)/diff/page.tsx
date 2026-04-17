@@ -296,7 +296,7 @@ export default function DiffPage() {
         <button
           onClick={buildFromLive}
           disabled={building}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-60"
+          className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium disabled:opacity-60"
         >
           {building ? "Capturing + diffing…" : ops.length ? "Rebuild from live data" : "Build from live data"}
         </button>
@@ -335,7 +335,7 @@ export default function DiffPage() {
                   key={k}
                   onClick={() => setFilter(k)}
                   className={`px-3 py-1.5 ${
-                    filter === k ? "bg-ink text-paper dark:bg-paper dark:text-ink" : ""
+                    filter === k ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors" : ""
                   }`}
                 >
                   {k}
@@ -354,7 +354,7 @@ export default function DiffPage() {
             <button
               onClick={explain}
               disabled={explaining || selected.size === 0}
-              className="ml-auto rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-3 py-1.5 text-sm disabled:opacity-60"
+              className="ml-auto rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-3 py-1.5 text-sm disabled:opacity-60"
             >
               {explaining ? "Claude is explaining…" : "Explain selected"}
             </button>
@@ -411,7 +411,7 @@ export default function DiffPage() {
         </a>
         <a
           href="/apply"
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium"
+          className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium"
         >
           Continue to Apply →
         </a>

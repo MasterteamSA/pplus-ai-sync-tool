@@ -146,7 +146,7 @@ export default function MatchPage() {
                 setTarget("");
               }}
               className={`px-3 py-1.5 ${
-                kind === k ? "bg-ink text-paper dark:bg-paper dark:text-ink" : ""
+                kind === k ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors" : ""
               }`}
             >
               {k === "level" ? "Levels" : "Logs"}
@@ -156,7 +156,7 @@ export default function MatchPage() {
         <button
           onClick={fetchLive}
           disabled={fetching}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-60"
+          className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium disabled:opacity-60"
         >
           {fetching ? "Fetching…" : "Fetch live data"}
         </button>
@@ -249,7 +249,7 @@ export default function MatchPage() {
         </a>
         <a
           href="/diff"
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium"
+          className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium"
         >
           Continue to Diff →
         </a>

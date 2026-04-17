@@ -227,7 +227,7 @@ export default function AutopilotPage() {
         <button
           onClick={() => run(false)}
           disabled={running || !srcOk || !tgtOk || !kindsOk}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-50"
+          className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
           {running ? "Running autopilot…" : "Run autopilot"}
         </button>
@@ -267,9 +267,19 @@ export default function AutopilotPage() {
         ))}
       </section>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <a href="/snapshot" className="text-sm underline underline-offset-2">← Snapshot</a>
-        <a href="/history" className="text-sm underline underline-offset-2">View history →</a>
+      <div className="flex flex-wrap items-center gap-3 pt-2">
+        <a
+          href="/snapshot"
+          className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+        >
+          ← Snapshot
+        </a>
+        <a
+          href="/history"
+          className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+        >
+          View history →
+        </a>
       </div>
     </div>
   );
@@ -341,11 +351,11 @@ function EnvForm({
           <select
             value={auth}
             onChange={(e) => onAuth(e.target.value as "cookie" | "bearer" | "basic")}
-            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-paper text-ink dark:bg-ink dark:text-paper p-2 text-sm"
+            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-background text-foreground p-2 text-sm"
           >
-            <option value="cookie" className="bg-paper text-ink dark:bg-ink dark:text-paper">cookie</option>
-            <option value="bearer" className="bg-paper text-ink dark:bg-ink dark:text-paper">bearer</option>
-            <option value="basic" className="bg-paper text-ink dark:bg-ink dark:text-paper">basic (user:pass)</option>
+            <option value="cookie" className="bg-background text-foreground">cookie</option>
+            <option value="bearer" className="bg-background text-foreground">bearer</option>
+            <option value="basic" className="bg-background text-foreground">basic (user:pass)</option>
           </select>
         </label>
         <label className="block">

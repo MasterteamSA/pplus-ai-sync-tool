@@ -290,7 +290,7 @@ export default function ApplyPage() {
         <button
           onClick={apply}
           disabled={!canApply}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-50"
+          className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
           {running ? "Applying…" : `Apply to ${selected.length} target(s)`}
         </button>

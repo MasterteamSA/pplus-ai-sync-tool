@@ -29,7 +29,34 @@ const body = z.object({
   }),
   ops: z.array(opSchema).min(1),
   dryRun: z.boolean().default(false),
+  continueOnError: z.boolean().default(true),
 });
+
+/**
+ * Fields PPlus assigns server-side — if we POST them on a create, the
+ * server usually 400s or silently ignores with an ambiguous error.
+ * Strip them so the target generates its own.
+ */
+const SERVER_FIELDS = new Set([
+  "id", "_id", "Id",
+  "createdAt", "CreatedAt", "createdDate",
+  "updatedAt", "UpdatedAt", "modifiedAt",
+  "createdBy", "CreatedBy", "createdById",
+  "updatedBy", "UpdatedBy", "updatedById",
+]);
+
+function cleanPayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cleanPayload);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SERVER_FIELDS.has(k)) continue;
+      out[k] = cleanPayload(v);
+    }
+    return out;
+  }
+  return value;
+}
 
 interface OpResult {
   id: string;
@@ -50,7 +77,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
   }
-  const { target, ops, dryRun } = parsed.data;
+  const { target, ops, dryRun, continueOnError } = parsed.data;
 
   const extraHeaders = target.csr ? { csr: target.csr } : undefined;
   const auth =
@@ -77,12 +104,14 @@ export async function POST(req: Request) {
       continue;
     }
 
-    // Reshape op so RestConnector.applyChange gets the payload it expects.
-    // Our DiffOp may carry the payload on `after`, `before`, or `payload`.
-    const after =
+    const rawAfter =
       (rawOp.after as unknown) ??
       (rawOp.payload as unknown) ??
       null;
+    // Strip server-assigned fields for create; keep as-is for update (the
+    // target may need its own id back in the body).
+    const after = rawOp.op === "create" ? cleanPayload(rawAfter) : rawAfter;
+
     const op: DiffOp = {
       id: rawOp.id,
       op: rawOp.op,
@@ -102,10 +131,10 @@ export async function POST(req: Request) {
         ...(res.newId ? { newId: res.newId } : {}),
         ...(res.error ? { error: res.error } : {}),
       });
-      if (!res.ok) break; // abort on first failure
+      if (!res.ok && !continueOnError) break;
     } catch (e) {
       results.push({ id: rawOp.id, ok: false, error: (e as Error).message });
-      break;
+      if (!continueOnError) break;
     }
   }
 

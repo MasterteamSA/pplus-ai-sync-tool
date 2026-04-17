@@ -54,6 +54,8 @@ export async function POST(req: Request) {
   const entities: Partial<Record<EntityKind, Entity[]>> = {};
   const errors: Record<string, string> = {};
 
+  const diagnostics: Record<string, { status: number; ct: string; preview: string }> = {};
+
   for (const k of kinds) {
     const bucket: Entity[] = [];
     try {
@@ -62,6 +64,15 @@ export async function POST(req: Request) {
         if (bucket.length >= limit) break;
       }
       entities[k] = bucket;
+      // When no entities land, probe the same path directly to show why.
+      if (bucket.length === 0) {
+        try {
+          const diag = await connector.diagnoseList(k);
+          diagnostics[k] = diag;
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (err) {
       errors[k] = (err as Error).message;
     }
@@ -78,5 +89,6 @@ export async function POST(req: Request) {
     counts,
     entities,
     errors: Object.keys(errors).length ? errors : undefined,
+    diagnostics: Object.keys(diagnostics).length ? diagnostics : undefined,
   });
 }

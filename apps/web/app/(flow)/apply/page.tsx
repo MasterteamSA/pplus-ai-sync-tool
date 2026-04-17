@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { flow, type DiffOp, type RunRecord } from "@/lib/flow-state";
 
+interface OpResult {
+  id: string;
+  ok: boolean;
+  newId?: string;
+  error?: string;
+}
+
 interface TargetState {
   label: string;
   baseUrl: string;
@@ -12,6 +19,9 @@ interface TargetState {
   progress: number;
   status: "idle" | "running" | "done" | "failed";
   failedOpId?: string;
+  applied?: number;
+  failedCount?: number;
+  results?: OpResult[];
 }
 
 function hostOf(url: string): string {
@@ -113,7 +123,7 @@ export default function ApplyPage() {
           applied?: number;
           failed?: number;
           total?: number;
-          results?: { id: string; ok: boolean; error?: string }[];
+          results?: OpResult[];
           error?: string;
         };
 
@@ -123,16 +133,16 @@ export default function ApplyPage() {
         grandFailed += failed;
 
         const firstFail = body.results?.find((r) => !r.ok);
-        if (!res.ok || !body.ok || firstFail) {
-          anyTargetFailed = true;
-          patch(i, {
-            status: "failed",
-            progress: ops.length ? (applied / ops.length) * 100 : 0,
-            ...(firstFail?.id ? { failedOpId: firstFail.id } : {}),
-          });
-        } else {
-          patch(i, { status: "done", progress: 100 });
-        }
+        const done = !res.ok || !body.ok || firstFail;
+        if (done) anyTargetFailed = true;
+        patch(i, {
+          status: done ? "failed" : "done",
+          progress: ops.length ? (applied / ops.length) * 100 : 100,
+          ...(firstFail?.id ? { failedOpId: firstFail.id } : {}),
+          applied,
+          failedCount: failed,
+          results: body.results ?? [],
+        });
       } catch (e) {
         anyTargetFailed = true;
         grandFailed += 1;
@@ -230,19 +240,40 @@ export default function ApplyPage() {
                 </div>
 
                 {(t.status !== "idle" || t.progress > 0) && (
-                  <div>
+                  <div className="space-y-2">
                     <div className="h-2 w-full bg-black/10 dark:bg-white/10 rounded overflow-hidden">
                       <div
-                        className={`h-full ${
-                          t.status === "failed" ? "bg-red-500" : "bg-green-500"
-                        }`}
+                        className={`h-full ${t.status === "failed" ? "bg-red-500" : "bg-green-500"}`}
                         style={{ width: `${t.progress}%` }}
                       />
                     </div>
-                    {t.failedOpId && (
-                      <div className="mt-1 text-xs text-red-600 dark:text-red-400">
-                        Failed at op {t.failedOpId}. Rollback snapshot available on the History page.
+                    {(t.applied !== undefined || t.failedCount !== undefined) && (
+                      <div className="text-xs opacity-80">
+                        <span className="text-green-600 dark:text-green-400">{t.applied ?? 0} ok</span>
+                        {(t.failedCount ?? 0) > 0 && (
+                          <span className="ml-2 text-red-600 dark:text-red-400">
+                            {t.failedCount} failed
+                          </span>
+                        )}
+                        <span className="ml-2 opacity-60">of {ops.length}</span>
                       </div>
+                    )}
+                    {t.results && t.results.some((r) => !r.ok) && (
+                      <details className="rounded border border-black/10 dark:border-white/10 p-2 text-xs">
+                        <summary className="cursor-pointer opacity-80">
+                          Show {t.results.filter((r) => !r.ok).length} failure(s)
+                        </summary>
+                        <ul className="mt-2 space-y-1">
+                          {t.results
+                            .filter((r) => !r.ok)
+                            .map((r) => (
+                              <li key={r.id} className="font-mono break-all">
+                                <span className="opacity-70">{r.id}:</span>{" "}
+                                <span className="text-red-600 dark:text-red-400">{r.error}</span>
+                              </li>
+                            ))}
+                        </ul>
+                      </details>
                     )}
                   </div>
                 )}

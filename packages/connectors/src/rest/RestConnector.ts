@@ -72,6 +72,43 @@ interface RawEntity {
   [k: string]: unknown;
 }
 
+/**
+ * PPlus wraps list responses in {Status, Code, Data, Message, Errors}. Older
+ * .NET endpoints use lowercase {data}. Some return a bare array. Handle all.
+ */
+function unwrapList(raw: unknown): RawEntity[] {
+  if (Array.isArray(raw)) return raw as RawEntity[];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    // Arrays nested one level in (PPlusResponse: {Data: [...]}).
+    for (const key of ["Data", "data", "items", "Items", "result", "Result"]) {
+      const v = o[key];
+      if (Array.isArray(v)) return v as RawEntity[];
+      if (v && typeof v === "object") {
+        const vo = v as Record<string, unknown>;
+        for (const kk of ["items", "Items", "data", "Data"]) {
+          const vv = vo[kk];
+          if (Array.isArray(vv)) return vv as RawEntity[];
+        }
+      }
+    }
+    // Single-entity response wrapped as {Data: {id, ...}} or {data: {data: {id, ...}}}.
+    const single = (o as { Data?: unknown; data?: unknown }).Data ?? (o as { data?: unknown }).data ?? o;
+    if (single && typeof single === "object") {
+      const inner = (single as { data?: unknown }).data;
+      const candidate = inner && typeof inner === "object" && !Array.isArray(inner) ? inner : single;
+      if (
+        candidate &&
+        typeof candidate === "object" &&
+        ("id" in (candidate as object) || "_id" in (candidate as object) || "Id" in (candidate as object))
+      ) {
+        return [candidate as RawEntity];
+      }
+    }
+  }
+  return [];
+}
+
 function coerce(raw: RawEntity, kind: EntityKind): Entity {
   const id = String(raw.id ?? raw._id ?? "");
   const nameRaw = raw.Name ?? raw.name ?? raw.displayName ?? "";
@@ -172,11 +209,29 @@ export class RestConnector implements PPlusConnector {
       const path = endpoint.list.replace(/^\//, "");
       const extra = endpoint.headers ?? {};
       const raw = await this.queue.add(() =>
-        this.http.get(path, { headers: extra }).json<RawEntity[] | { items?: RawEntity[] }>(),
+        this.http.get(path, { headers: extra, throwHttpErrors: false }).json<unknown>(),
       );
-      const list = Array.isArray(raw) ? raw : (raw?.items ?? []);
+      const list = unwrapList(raw);
       for (const item of list) yield coerce(item, kind);
     }
+  }
+
+  /** Diagnostic probe — returns the raw status/content-type/preview for the
+   *  list endpoint of a given kind. Used by /api/capture to explain why a
+   *  bucket came back empty. */
+  async diagnoseList(kind: EntityKind): Promise<{ status: number; ct: string; preview: string; path: string }> {
+    const endpoint = ENDPOINTS[kind];
+    const path = endpoint.list.replace(/^\//, "");
+    const extra = endpoint.headers ?? {};
+    const res = await this.http.get(path, { headers: extra, throwHttpErrors: false });
+    const ct = res.headers.get("content-type") ?? "";
+    let preview = "";
+    try {
+      preview = (await res.text()).slice(0, 400);
+    } catch {
+      /* ignore */
+    }
+    return { status: res.status, ct, preview, path };
   }
 
   async fetchEntity(kind: EntityKind, id: string): Promise<Entity | null> {
@@ -192,33 +247,96 @@ export class RestConnector implements PPlusConnector {
     return coerce(raw, kind);
   }
 
+  /**
+   * Try a request, then retry once with a sibling path prefix if the server
+   * responds 404/405. PPlus instances route both /service/api/... and
+   * /api/... depending on deployment, so we try the alternate before
+   * giving up.
+   */
+  private async withPathFallback<T>(
+    path: string,
+    headers: Record<string, string>,
+    json: unknown,
+    method: "post" | "put" | "delete",
+  ): Promise<{ ok: boolean; status: number; body: T | null; pathUsed: string; error?: string }> {
+    const tryOne = async (p: string) => {
+      const cleaned = p.replace(/^\//, "");
+      const init: Record<string, unknown> = { headers, throwHttpErrors: false };
+      if (method !== "delete" && json !== undefined) init.json = json;
+      const res = await this.queue.add(() =>
+        method === "post"
+          ? this.http.post(cleaned, init)
+          : method === "put"
+          ? this.http.put(cleaned, init)
+          : this.http.delete(cleaned, init),
+      );
+      // Read the body text once; try JSON parse. This guarantees we always
+      // have bytes to put in an error message even when the response is
+      // empty or non-JSON.
+      const raw = await res!.text().catch(() => "");
+      let body: T | null = null;
+      try {
+        body = raw ? (JSON.parse(raw) as T) : null;
+      } catch {
+        body = null;
+      }
+      return { res: res!, body, errText: raw };
+    };
+
+    const { res, body, errText } = await tryOne(path);
+    if (res.ok) return { ok: true, status: res.status, body, pathUsed: path };
+
+    if (res.status === 404 || res.status === 405) {
+      const alt = path.startsWith("/service/api/")
+        ? path.replace(/^\/service\/api\//, "/api/")
+        : path.startsWith("/api/")
+        ? path.replace(/^\/api\//, "/service/api/")
+        : null;
+      if (alt) {
+        const retry = await tryOne(alt);
+        if (retry.res.ok) return { ok: true, status: retry.res.status, body: retry.body, pathUsed: alt };
+        return {
+          ok: false,
+          status: retry.res.status,
+          body: retry.body,
+          pathUsed: alt,
+          error: `HTTP ${retry.res.status} ${retry.errText.slice(0, 400)}`.trim(),
+        };
+      }
+    }
+    return {
+      ok: false,
+      status: res.status,
+      body,
+      pathUsed: path,
+      error: `HTTP ${res.status} ${errText.slice(0, 400)}`.trim(),
+    };
+  }
+
   async applyChange(op: DiffOp): Promise<ApplyResult> {
     const endpoint = ENDPOINTS[op.kind];
     const extra = endpoint.headers ?? {};
-    try {
-      if (op.op === "create") {
-        const path = endpoint.create.replace(/^\//, "");
-        const body = await this.queue.add(() =>
-          this.http.post(path, { headers: extra, json: op.after }).json<RawEntity>(),
-        );
-        return { ok: true, newId: String(body?.id ?? body?._id ?? "") };
-      }
-      if (op.op === "update" || op.op === "rewriteRef") {
-        if (!op.targetId) return { ok: false, error: "update missing targetId" };
-        const path = endpoint.update(op.targetId).replace(/^\//, "");
-        await this.queue.add(() => this.http.put(path, { headers: extra, json: op.after }));
-        return { ok: true };
-      }
-      if (op.op === "delete") {
-        if (!op.targetId) return { ok: false, error: "delete missing targetId" };
-        const path = endpoint.delete(op.targetId).replace(/^\//, "");
-        await this.queue.add(() => this.http.delete(path, { headers: extra }));
-        return { ok: true };
-      }
-      return { ok: false, error: `unsupported op ${op.op}` };
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
+    if (op.op === "create") {
+      const r = await this.withPathFallback<RawEntity>(endpoint.create, extra, op.after, "post");
+      if (!r.ok) return { ok: false, error: r.error ?? `HTTP ${r.status}` };
+      return {
+        ok: true,
+        newId: String((r.body?.id as string | number | undefined) ?? r.body?._id ?? ""),
+      };
     }
+    if (op.op === "update" || op.op === "rewriteRef") {
+      if (!op.targetId) return { ok: false, error: "update missing targetId" };
+      const r = await this.withPathFallback<RawEntity>(endpoint.update(op.targetId), extra, op.after, "put");
+      if (!r.ok) return { ok: false, error: r.error ?? `HTTP ${r.status}` };
+      return { ok: true };
+    }
+    if (op.op === "delete") {
+      if (!op.targetId) return { ok: false, error: "delete missing targetId" };
+      const r = await this.withPathFallback<RawEntity>(endpoint.delete(op.targetId), extra, undefined, "delete");
+      if (!r.ok) return { ok: false, error: r.error ?? `HTTP ${r.status}` };
+      return { ok: true };
+    }
+    return { ok: false, error: `unsupported op ${op.op}` };
   }
 
   async notifySync(payload: {

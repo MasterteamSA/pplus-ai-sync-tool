@@ -24,7 +24,7 @@ interface AlignResponse {
   error?: string;
 }
 
-const demoSource = JSON.stringify(
+const DEMO_SOURCE = JSON.stringify(
   [
     { key: "Site_Revenue_1", name: "Revenue", type: "number" },
     { key: "Site_Cost_2", name: "Cost", type: "number" },
@@ -36,7 +36,7 @@ const demoSource = JSON.stringify(
   2,
 );
 
-const demoTarget = JSON.stringify(
+const DEMO_TARGET = JSON.stringify(
   [
     { key: "Facility_Revenue_91", name: "Revenue", type: "number" },
     { key: "Facility_Cost_92", name: "Cost", type: "number" },
@@ -47,6 +47,13 @@ const demoTarget = JSON.stringify(
   null,
   2,
 );
+
+const PLACEHOLDER_SOURCE = `[
+  { "key": "...", "name": "..." }
+]`;
+const PLACEHOLDER_TARGET = `[
+  { "key": "...", "name": "..." }
+]`;
 
 const STATE_KEY = "pplus-sync:align-form";
 
@@ -61,19 +68,43 @@ interface AlignFormState {
 }
 
 export default function AlignPage() {
-  const [source, setSource] = useState(demoSource);
-  const [target, setTarget] = useState(demoTarget);
-  const [sourceLevels, setSourceLevels] = useState("Site");
-  const [targetLevels, setTargetLevels] = useState("Facility");
-  const [levelMap, setLevelMap] = useState('{"Site":"Facility"}');
+  const [source, setSource] = useState("");
+  const [target, setTarget] = useState("");
+  const [sourceLevels, setSourceLevels] = useState("");
+  const [targetLevels, setTargetLevels] = useState("");
+  const [levelMap, setLevelMap] = useState("{}");
   const [useAi, setUseAi] = useState(true);
-  const [hint, setHint] = useState("The organization renamed Sites to Facilities last quarter.");
+  const [hint, setHint] = useState("");
   const [result, setResult] = useState<AlignResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [fetchStatus, setFetchStatus] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const hydrated = useRef(false);
+
+  function loadDemo() {
+    setSource(DEMO_SOURCE);
+    setTarget(DEMO_TARGET);
+    setSourceLevels("Site");
+    setTargetLevels("Facility");
+    setLevelMap('{"Site":"Facility"}');
+    setHint("The organization renamed Sites to Facilities last quarter.");
+    setFetchStatus("Demo data loaded. This is a canned example — replace with real data before applying.");
+    setErr(null);
+    setResult(null);
+  }
+
+  function clearAll() {
+    setSource("");
+    setTarget("");
+    setSourceLevels("");
+    setTargetLevels("");
+    setLevelMap("{}");
+    setHint("");
+    setFetchStatus(null);
+    setErr(null);
+    setResult(null);
+  }
 
   async function fetchLive() {
     const envs = flow.getEnvs();
@@ -220,8 +251,8 @@ export default function AlignPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <LabeledTextArea label="Source properties (JSON)" value={source} onChange={setSource} />
-        <LabeledTextArea label="Target properties (JSON)" value={target} onChange={setTarget} />
+        <LabeledTextArea label="Source properties (JSON)" value={source} onChange={setSource} placeholder={PLACEHOLDER_SOURCE} />
+        <LabeledTextArea label="Target properties (JSON)" value={target} onChange={setTarget} placeholder={PLACEHOLDER_TARGET} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -235,18 +266,30 @@ export default function AlignPage() {
         <button
           onClick={fetchLive}
           disabled={fetching}
-          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-60"
+          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-60"
         >
           {fetching ? "Fetching…" : "Fetch live data"}
         </button>
-        <label className="flex items-center gap-2 text-sm">
+        <button
+          onClick={loadDemo}
+          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          Load demo
+        </button>
+        <button
+          onClick={clearAll}
+          className="rounded-md border border-black/10 dark:border-white/10 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          Clear
+        </button>
+        <label className="flex items-center gap-2 text-sm ml-auto">
           <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
-          Use AI for residual (Claude CLI)
+          Use AI for residual
         </label>
         <button
           onClick={run}
-          disabled={loading}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-60"
+          disabled={loading || !source.trim() || !target.trim()}
+          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-40"
         >
           {loading ? "Aligning…" : "Run alignment"}
         </button>
@@ -311,7 +354,17 @@ export default function AlignPage() {
   );
 }
 
-function LabeledTextArea({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function LabeledTextArea({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
   return (
     <label className="block">
       <span className="text-xs opacity-70">{label}</span>
@@ -319,7 +372,8 @@ function LabeledTextArea({ label, value, onChange }: { label: string; value: str
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={10}
-        className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 font-mono text-xs"
+        placeholder={placeholder}
+        className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 font-mono text-xs placeholder:opacity-40"
         spellCheck={false}
       />
     </label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { flow, SEED_LEVELS, type MatchDecision } from "@/lib/flow-state";
 
 /**
@@ -23,9 +23,14 @@ export default function MatchPage() {
   const [source, setSource] = useState<string>(JSON.stringify(SEED_LEVELS.source, null, 2));
   const [target, setTarget] = useState<string>(JSON.stringify(SEED_LEVELS.target, null, 2));
   const [useAi, setUseAi] = useState(true);
-  const [decisions, setDecisions] = useState<MatchDecision[]>(flow.getMatches());
+  const [decisions, setDecisions] = useState<MatchDecision[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Hydrate from localStorage on mount so SSR markup matches the client.
+  useEffect(() => {
+    setDecisions(flow.getMatches());
+  }, []);
 
   async function run() {
     setLoading(true);

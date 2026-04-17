@@ -30,17 +30,49 @@ export default function AutopilotPage() {
   const [ready, setReady] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
-  const [envs, setEnvs] = useState<ReturnType<typeof flow.getEnvs>>({ targets: [] });
+  type AuthMode = "cookie" | "bearer" | "basic";
+  const [srcUrl, setSrcUrl] = useState("");
+  const [srcAuth, setSrcAuth] = useState<AuthMode>("bearer");
+  const [srcSecret, setSrcSecret] = useState("");
+  const [srcCsr, setSrcCsr] = useState("");
+  const [tgtUrl, setTgtUrl] = useState("");
+  const [tgtAuth, setTgtAuth] = useState<AuthMode>("bearer");
+  const [tgtSecret, setTgtSecret] = useState("");
+  const [tgtCsr, setTgtCsr] = useState("");
   const [kinds, setKinds] = useState<string[]>([]);
 
   useEffect(() => {
-    setEnvs(flow.getEnvs());
+    const envs = flow.getEnvs();
+    if (envs.source) {
+      setSrcUrl(envs.source.baseUrl ?? "");
+      setSrcAuth((envs.source.authMode as AuthMode) ?? "bearer");
+      setSrcSecret(envs.source.secret ?? "");
+      setSrcCsr(envs.source.csr ?? "");
+    }
+    const t0 = envs.targets?.[0];
+    if (t0) {
+      setTgtUrl(t0.baseUrl ?? "");
+      setTgtAuth((t0.authMode as AuthMode) ?? "bearer");
+      setTgtSecret(t0.secret ?? "");
+      setTgtCsr(t0.csr ?? "");
+    }
     setKinds(flow.getKinds());
     setReady(true);
   }, []);
 
-  const srcOk = ready && !!envs.source?.baseUrl;
-  const tgtOk = ready && !!envs.targets?.[0]?.baseUrl;
+  // Persist envs on every change so /connect + other pages stay in sync.
+  useEffect(() => {
+    if (!ready) return;
+    flow.setEnvs({
+      source: { label: "source", baseUrl: srcUrl, authMode: srcAuth, secret: srcSecret, csr: srcCsr, ok: false },
+      targets: tgtUrl
+        ? [{ label: "target-1", baseUrl: tgtUrl, authMode: tgtAuth, secret: tgtSecret, csr: tgtCsr, ok: false }]
+        : [],
+    });
+  }, [ready, srcUrl, srcAuth, srcSecret, srcCsr, tgtUrl, tgtAuth, tgtSecret, tgtCsr]);
+
+  const srcOk = ready && !!srcUrl && !!srcSecret;
+  const tgtOk = ready && !!tgtUrl && !!tgtSecret;
   const kindsOk = ready && kinds.length > 0;
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -50,26 +82,12 @@ export default function AutopilotPage() {
     if (!srcOk || !tgtOk || !kindsOk) return;
     setRunning(true);
     setEvents([]);
-    const src = envs.source!;
-    const tgt = envs.targets[0]!;
     const res = await fetch("/api/autopilot", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        source: {
-          label: src.label,
-          baseUrl: src.baseUrl,
-          authMode: src.authMode,
-          secret: src.secret ?? "",
-          csr: src.csr ?? "",
-        },
-        target: {
-          label: tgt.label,
-          baseUrl: tgt.baseUrl,
-          authMode: tgt.authMode,
-          secret: tgt.secret ?? "",
-          csr: tgt.csr ?? "",
-        },
+        source: { label: "source", baseUrl: srcUrl, authMode: srcAuth, secret: srcSecret, csr: srcCsr },
+        target: { label: "target-1", baseUrl: tgtUrl, authMode: tgtAuth, secret: tgtSecret, csr: tgtCsr },
         kinds,
         limitPerKind: 200,
         maxAiRetries: 2,
@@ -98,14 +116,13 @@ export default function AutopilotPage() {
           if (ev.type === "ai") setAiPending(ev.msg.includes("proposing"));
           if (ev.type === "done" || ev.type === "error") setAiPending(false);
           if (ev.type === "done") {
-            // Save a history record.
             if (ev.applied !== undefined) {
               flow.addRun({
                 id: ev.runId ?? `auto-${ev.ts}`,
                 createdAt: new Date(ev.ts).toISOString(),
                 actor: "autopilot",
-                sourceLabel: src.label,
-                targetLabels: [tgt.label],
+                sourceLabel: "source",
+                targetLabels: ["target-1"],
                 kinds,
                 ops: ev.total ?? 0,
                 applied: ev.applied,
@@ -143,20 +160,41 @@ export default function AutopilotPage() {
         </p>
       </div>
 
-      {ready && (
-        <section className="rounded-lg border border-black/10 dark:border-white/10 p-4 text-sm">
-          <div className="flex flex-wrap gap-3">
-            <StatusItem ok={srcOk} label="Source" value={envs.source?.baseUrl ?? "not configured"} href="/connect" />
-            <StatusItem ok={tgtOk} label="Target" value={envs.targets?.[0]?.baseUrl ?? "not configured"} href="/connect" />
-            <StatusItem
-              ok={kindsOk}
-              label="Kinds"
-              value={kindsOk ? `${kinds.length} selected` : "none selected"}
-              href="/snapshot"
-            />
-          </div>
-        </section>
-      )}
+      <section className="grid gap-4 md:grid-cols-2">
+        <EnvForm
+          title="Source"
+          ok={srcOk}
+          url={srcUrl}
+          onUrl={setSrcUrl}
+          auth={srcAuth}
+          onAuth={setSrcAuth}
+          secret={srcSecret}
+          onSecret={setSrcSecret}
+          csr={srcCsr}
+          onCsr={setSrcCsr}
+        />
+        <EnvForm
+          title="Target"
+          ok={tgtOk}
+          url={tgtUrl}
+          onUrl={setTgtUrl}
+          auth={tgtAuth}
+          onAuth={setTgtAuth}
+          secret={tgtSecret}
+          onSecret={setTgtSecret}
+          csr={tgtCsr}
+          onCsr={setTgtCsr}
+        />
+      </section>
+
+      <section className="rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm flex items-center gap-3">
+        <span className={`inline-block size-2 rounded-full ${kindsOk ? "bg-green-500" : "bg-red-500"}`} />
+        <span className="font-medium">Kinds:</span>
+        <span className="opacity-75">{kindsOk ? `${kinds.length} selected` : "none selected"}</span>
+        <a href="/snapshot" className="ml-auto text-xs underline">
+          {kindsOk ? "change" : "configure"}
+        </a>
+      </section>
 
       <section className="flex flex-wrap items-center gap-3">
         <button
@@ -229,13 +267,87 @@ function EventRow({ e }: { e: Event }) {
   );
 }
 
-function StatusItem({ ok, label, value, href }: { ok: boolean; label: string; value: string; href: string }) {
+function EnvForm({
+  title,
+  ok,
+  url,
+  onUrl,
+  auth,
+  onAuth,
+  secret,
+  onSecret,
+  csr,
+  onCsr,
+}: {
+  title: string;
+  ok: boolean;
+  url: string;
+  onUrl: (v: string) => void;
+  auth: "cookie" | "bearer" | "basic";
+  onAuth: (v: "cookie" | "bearer" | "basic") => void;
+  secret: string;
+  onSecret: (v: string) => void;
+  csr: string;
+  onCsr: (v: string) => void;
+}) {
   return (
-    <div className="flex items-center gap-2">
-      <span className={`inline-block size-2 rounded-full ${ok ? "bg-green-500" : "bg-red-500"}`} />
-      <span className="font-medium">{label}:</span>
-      <span className="opacity-75 font-mono text-xs break-all">{value}</span>
-      {!ok && <a href={href} className="text-xs underline ml-1">configure</a>}
+    <div className="rounded-lg border border-black/10 dark:border-white/10 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="font-medium flex items-center gap-2">
+          <span className={`inline-block size-2 rounded-full ${ok ? "bg-green-500" : "bg-gray-400"}`} />
+          {title}
+        </div>
+        <span className="text-xs opacity-60">pasted URL will be normalized to origin</span>
+      </div>
+      <label className="block">
+        <span className="text-xs opacity-70">URL</span>
+        <input
+          value={url}
+          onChange={(e) => onUrl(e.target.value)}
+          placeholder="https://instance.pplus.example"
+          className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm font-mono"
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="text-xs opacity-70">Auth mode</span>
+          <select
+            value={auth}
+            onChange={(e) => onAuth(e.target.value as "cookie" | "bearer" | "basic")}
+            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm"
+          >
+            <option value="cookie">cookie</option>
+            <option value="bearer">bearer</option>
+            <option value="basic">basic (user:pass)</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs opacity-70">
+            Secret{" "}
+            <span className="opacity-60">
+              ({auth === "basic" ? "user:pass" : auth === "bearer" ? "token" : "cookie header"})
+            </span>
+          </span>
+          <input
+            value={secret}
+            onChange={(e) => onSecret(e.target.value)}
+            type="password"
+            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm font-mono"
+          />
+        </label>
+      </div>
+      <label className="block">
+        <span className="text-xs opacity-70">
+          CSR token <span className="opacity-60">(optional; from <code>localStorage.getItem(&apos;csr&apos;)</code>)</span>
+        </span>
+        <input
+          value={csr}
+          onChange={(e) => onCsr(e.target.value)}
+          type="password"
+          placeholder="optional"
+          className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm font-mono"
+        />
+      </label>
     </div>
   );
 }

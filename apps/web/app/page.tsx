@@ -1,7 +1,8 @@
-import { db, schema } from "@pplus-sync/db";
+import { db, dbReady, schema } from "@pplus-sync/db";
 
 async function dbStatus(): Promise<{ ok: boolean; users: number; msg: string }> {
   try {
+    await dbReady;
     const rows = await db.select({ id: schema.users.id }).from(schema.users);
     return { ok: true, users: rows.length, msg: "embedded PGlite reachable" };
   } catch (e) {

@@ -8,13 +8,17 @@
     "node": ">=22"
   },
   "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "start": "pnpm --filter @pplus-sync/web dev",
     "dev": "pnpm --filter @pplus-sync/web dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @pplus-sync/db exec drizzle-kit generate --name init",
     "db:migrate": "pnpm --filter @pplus-sync/db migrate",
-    "db:seed": "pnpm --filter @pplus-sync/db seed"
+    "db:seed": "pnpm --filter @pplus-sync/db seed",
+    "db:reset": "rm -rf ~/.pplus-ai-sync/db"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

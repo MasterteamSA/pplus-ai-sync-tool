@@ -34,30 +34,29 @@ Not yet implemented (next pass):
 
 The approved plan is at `~/.claude/plans/curried-inventing-tulip.md`.
 
-## Getting started
+## Quickstart (30 seconds)
 
-Prereqs: **Node 22+**, **pnpm 9+**, and either Docker (for the bundled Postgres) or any reachable Postgres 16.
+**Prereqs:** just Node 22+ (`node -v` → 22 or newer). pnpm is installed on demand via corepack. No Docker, no Postgres, no API keys.
 
 ```bash
-# install
-pnpm install
-
-# env
-cp .env.example .env.local
-# then fill in ANTHROPIC_API_KEY, PPLUS_SYNC_MASTER_KEY, AUTH_SECRET
-# (commands to generate the last two are in .env.example)
-
-# database (optional for scaffolding smoke-test)
-docker compose up -d postgres
-pnpm --filter @pplus-sync/db generate
-pnpm db:migrate
-pnpm db:seed
-
-# run
-pnpm dev       # http://localhost:3000
+git clone <this-repo> pplus-ai-sync-tool
+cd pplus-ai-sync-tool
+pnpm setup        # checks prereqs, installs deps, generates migrations
+pnpm dev          # http://localhost:3000
 ```
 
-If you don't have Docker, point `DATABASE_URL` at any Postgres; the rest of the tool is unchanged.
+That's it. The first request creates an embedded Postgres at `~/.pplus-ai-sync/db`, runs all migrations, and seeds a default operator user (`admin` / `admin` — override via `SEED_USER` / `SEED_PASSWORD`).
+
+**AI features** work if the `claude` CLI is installed and signed in on the machine:
+
+```bash
+npm i -g @anthropic-ai/claude-code   # if you don't have it
+claude                                # sign in once
+```
+
+No `ANTHROPIC_API_KEY` needed — the tool uses whatever auth the CLI already has.
+
+**Want a real Postgres instead of PGlite?** Set `DATABASE_URL=postgres://user:pass@host/db` in `.env.local` — the schema is identical.
 
 ## Design decisions
 

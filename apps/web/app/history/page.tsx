@@ -42,7 +42,7 @@ export default function HistoryPage() {
 
       {runs.length === 0 ? (
         <div className="rounded-lg border border-black/10 dark:border-white/10 p-6 text-sm opacity-80 text-center">
-          No runs yet. Complete a sync on <a href="/apply" className="underline">/apply</a> and the record will land here.
+          No runs yet. Complete a sync on <a href="/autopilot" className="underline">/autopilot</a> and the record will land here.
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-black/10 dark:border-white/10">
@@ -107,8 +107,11 @@ export default function HistoryPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-3 pt-2">
-        <a href="/apply" className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm">
-          ← Apply
+        <a
+          href="/autopilot"
+          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium"
+        >
+          ← Back to Autopilot
         </a>
       </div>
     </div>

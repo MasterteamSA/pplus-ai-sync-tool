@@ -214,21 +214,13 @@ export default function SnapshotPage() {
 
       <section className="pt-2 flex flex-wrap items-center gap-3">
         <a
-          href="/connect"
-          className="rounded-md border border-black/10 dark:border-white/10 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5"
+          href="/autopilot"
+          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium"
         >
-          ← Connect
+          ← Back to Autopilot
         </a>
-        <button
-          type="button"
-          disabled={counts.selected === 0}
-          onClick={() => (window.location.href = "/match")}
-          className="rounded-md bg-ink text-paper dark:bg-paper dark:text-ink px-4 py-2 text-sm font-medium disabled:opacity-50"
-        >
-          Continue to Match →
-        </button>
         <span className="text-xs opacity-60">
-          Capture execution arrives with the pipeline pass; selection is persisted.
+          Selection is persisted — close the tab or return any time.
         </span>
       </section>
     </div>

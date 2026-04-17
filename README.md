@@ -34,9 +34,25 @@ Not yet implemented (next pass):
 
 The approved plan is at `~/.claude/plans/curried-inventing-tulip.md`.
 
-## Quickstart (30 seconds)
+## UI
 
-**Prereqs:** just Node 22+ (`node -v` → 22 or newer). pnpm is installed on demand via corepack. No Docker, no Postgres, no API keys.
+The UI is **Autopilot-first** — `/` redirects to `/autopilot`, and the header
+only exposes two entry points:
+
+- **Autopilot** — one-click source → target sync with Claude in the loop.
+- **History** — every applied run, with rollback.
+
+The underlying pipeline pages (`/connect`, `/snapshot`, `/match`, `/align`,
+`/diff`, `/apply`) still exist and are reachable by direct URL (or from the
+`configure` link on Autopilot), but they're no longer surfaced in the nav —
+Autopilot handles the happy path end-to-end.
+
+## Quickstart
+
+**Prereqs:** Node 22+ (`node -v` → 22 or newer) and pnpm 9+ (`npm i -g pnpm`).
+No Docker, no Postgres, no API keys.
+
+### macOS / Linux
 
 ```bash
 git clone https://github.com/Khalil-am/pplus-ai-sync-tool.git
@@ -44,14 +60,30 @@ cd pplus-ai-sync-tool
 pnpm dev
 ```
 
-That's really it. The first time you run `pnpm dev` it auto-installs
-dependencies, generates DB migrations, creates `.env.local`, picks the first
-free port starting at 3000, and boots. Every subsequent `pnpm dev` is instant.
+The first time you run `pnpm dev` it auto-installs dependencies, generates DB
+migrations, creates `.env.local`, picks the first free port starting at 3000,
+and boots.
 
-> If you want to pre-install explicitly, run `./scripts/setup.sh` or
-> `pnpm bootstrap` (note: `pnpm setup` is reserved by pnpm's own CLI).
+### Windows
 
-That's it. The first request creates an embedded Postgres at `~/.pplus-ai-sync/db`, runs all migrations, and seeds a default operator user (`admin` / `admin` — override via `SEED_USER` / `SEED_PASSWORD`).
+The top-level `pnpm dev` wrapper relies on `child_process.spawn('pnpm', ...)`,
+which Windows can't resolve without `shell: true` — so on Windows run the web
+app directly:
+
+```bash
+git clone https://github.com/Khalil-am/pplus-ai-sync-tool.git
+cd pplus-ai-sync-tool
+pnpm install
+cd apps/web
+pnpm exec next dev --turbopack -p 3000
+```
+
+### First run
+
+Open http://localhost:3000 — it redirects to `/autopilot`. The first request
+creates an embedded Postgres (PGlite) at `~/.pplus-ai-sync/db`, runs all
+migrations, and seeds a default operator user (`admin` / `admin` — override via
+`SEED_USER` / `SEED_PASSWORD`).
 
 **AI features** work if the `claude` CLI is installed and signed in on the machine:
 

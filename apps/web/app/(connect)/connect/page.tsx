@@ -282,11 +282,11 @@ function EnvCard({
           <select
             value={row.authMode}
             onChange={(e) => set("authMode", e.target.value as EnvRow["authMode"])}
-            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm"
+            className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-paper text-ink dark:bg-ink dark:text-paper p-2 text-sm"
           >
-            <option value="cookie">cookie</option>
-            <option value="bearer">bearer</option>
-            <option value="basic">basic (user:pass)</option>
+            <option value="cookie" className="bg-paper text-ink dark:bg-ink dark:text-paper">cookie</option>
+            <option value="bearer" className="bg-paper text-ink dark:bg-ink dark:text-paper">bearer</option>
+            <option value="basic" className="bg-paper text-ink dark:bg-ink dark:text-paper">basic (user:pass)</option>
           </select>
         </label>
         <label className="block">

@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pplus-sync-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pplus_sync
+      POSTGRES_PASSWORD: pplus_sync
+      POSTGRES_DB: pplus_sync
+    ports:
+      - "5433:5432"
+    volumes:
+      - pplus_sync_pgdata:/var/lib/postgresql/data
+
+volumes:
+  pplus_sync_pgdata:

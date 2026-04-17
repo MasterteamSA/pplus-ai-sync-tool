@@ -25,10 +25,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   PPlus <span className="opacity-60">AI Sync</span>
                 </span>
               </a>
-              <nav className="text-sm space-x-4 opacity-80">
+              <nav className="text-sm flex items-center gap-4 opacity-80">
+                <a href="/autopilot" className="font-semibold">Autopilot</a>
+                <span className="opacity-30">·</span>
                 <a href="/connect">Connect</a>
                 <a href="/snapshot">Snapshot</a>
-                <a href="/autopilot" className="font-semibold">Autopilot</a>
                 <a href="/match">Match</a>
                 <a href="/align">Align</a>
                 <a href="/diff">Diff</a>

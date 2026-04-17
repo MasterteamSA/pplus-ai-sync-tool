@@ -39,11 +39,14 @@ The approved plan is at `~/.claude/plans/curried-inventing-tulip.md`.
 **Prereqs:** just Node 22+ (`node -v` → 22 or newer). pnpm is installed on demand via corepack. No Docker, no Postgres, no API keys.
 
 ```bash
-git clone <this-repo> pplus-ai-sync-tool
+git clone https://github.com/Khalil-am/pplus-ai-sync-tool.git
 cd pplus-ai-sync-tool
-pnpm setup        # checks prereqs, installs deps, generates migrations
-pnpm dev          # http://localhost:3000
+./scripts/setup.sh    # checks prereqs, installs deps, generates migrations
+pnpm dev              # first free port starting at 3000
 ```
+
+> Heads-up: don't run `pnpm setup` — pnpm's own CLI shadows that name. Use
+> `./scripts/setup.sh` or `pnpm bootstrap`.
 
 That's it. The first request creates an embedded Postgres at `~/.pplus-ai-sync/db`, runs all migrations, and seeds a default operator user (`admin` / `admin` — override via `SEED_USER` / `SEED_PASSWORD`).
 

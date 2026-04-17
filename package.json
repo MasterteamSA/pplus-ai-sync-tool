@@ -8,9 +8,11 @@
     "node": ">=22"
   },
   "scripts": {
+    "bootstrap": "bash scripts/setup.sh",
     "setup": "bash scripts/setup.sh",
-    "start": "pnpm --filter @pplus-sync/web dev",
-    "dev": "pnpm --filter @pplus-sync/web dev",
+    "start": "node scripts/dev.mjs",
+    "dev": "node scripts/dev.mjs",
+    "banner": "node scripts/banner.mjs",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",

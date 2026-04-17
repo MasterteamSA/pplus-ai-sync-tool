@@ -26,6 +26,11 @@ step() { echo; echo "${BOLD}▸ $*${RESET}"; }
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Banner
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT_DIR/scripts/banner.mjs" "Bootstrapping workspace" || true
+fi
+
 step "Checking prerequisites"
 
 # Node.js 22+
@@ -73,8 +78,8 @@ else
   ok ".env.local already exists (leaving as-is)"
 fi
 
-echo
-echo "${BOLD}Setup complete.${RESET}"
-echo "  ${DIM}Start the app:${RESET}  ${BOLD}pnpm dev${RESET}  ${DIM}→ http://localhost:3000${RESET}"
+node "$ROOT_DIR/scripts/banner.mjs" "Bootstrap complete — run pnpm dev" || true
+
+echo "  ${DIM}Start the app:${RESET}  ${BOLD}pnpm dev${RESET}  ${DIM}→ first free port starting at 3000${RESET}"
 echo "  ${DIM}Default login:${RESET} ${BOLD}admin / admin${RESET} ${DIM}(override via SEED_USER / SEED_PASSWORD)${RESET}"
 echo

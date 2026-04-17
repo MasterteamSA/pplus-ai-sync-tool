@@ -20,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <a href="/connect">Connect</a>
                 <a href="/snapshot">Snapshot</a>
                 <a href="/match">Match</a>
+                <a href="/align">Align</a>
                 <a href="/diff">Diff</a>
                 <a href="/apply">Apply</a>
                 <a href="/history">History</a>

@@ -41,12 +41,15 @@ The approved plan is at `~/.claude/plans/curried-inventing-tulip.md`.
 ```bash
 git clone https://github.com/Khalil-am/pplus-ai-sync-tool.git
 cd pplus-ai-sync-tool
-./scripts/setup.sh    # checks prereqs, installs deps, generates migrations
-pnpm dev              # first free port starting at 3000
+pnpm dev
 ```
 
-> Heads-up: don't run `pnpm setup` — pnpm's own CLI shadows that name. Use
-> `./scripts/setup.sh` or `pnpm bootstrap`.
+That's really it. The first time you run `pnpm dev` it auto-installs
+dependencies, generates DB migrations, creates `.env.local`, picks the first
+free port starting at 3000, and boots. Every subsequent `pnpm dev` is instant.
+
+> If you want to pre-install explicitly, run `./scripts/setup.sh` or
+> `pnpm bootstrap` (note: `pnpm setup` is reserved by pnpm's own CLI).
 
 That's it. The first request creates an embedded Postgres at `~/.pplus-ai-sync/db`, runs all migrations, and seeds a default operator user (`admin` / `admin` — override via `SEED_USER` / `SEED_PASSWORD`).
 

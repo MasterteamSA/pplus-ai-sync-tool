@@ -9,6 +9,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,6 +40,48 @@ async function pickPort() {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = path.join(repoRoot, "apps", "web");
+
+function depsInstalled() {
+  return (
+    fs.existsSync(path.join(repoRoot, "node_modules")) &&
+    fs.existsSync(path.join(webDir, "node_modules")) &&
+    fs.existsSync(path.join(webDir, "node_modules", "next"))
+  );
+}
+
+if (!depsInstalled()) {
+  console.log("\u001b[33m!\u001b[0m node_modules missing — running pnpm install (first time only)");
+  const install = spawnSync("pnpm", ["install"], { cwd: repoRoot, stdio: "inherit" });
+  if (install.status !== 0) {
+    console.error("\u001b[31m\u2717\u001b[0m pnpm install failed. Fix the error above and try again.");
+    process.exit(install.status ?? 1);
+  }
+}
+
+const migrationsDir = path.join(repoRoot, "packages", "db", "drizzle");
+const hasMigrations =
+  fs.existsSync(migrationsDir) &&
+  fs.readdirSync(migrationsDir).some((f) => f.endsWith(".sql"));
+if (!hasMigrations) {
+  console.log("\u001b[33m!\u001b[0m no migrations yet — generating (first time only)");
+  const gen = spawnSync(
+    "pnpm",
+    ["--filter", "@pplus-sync/db", "exec", "drizzle-kit", "generate", "--name", "init"],
+    { cwd: repoRoot, stdio: "inherit" },
+  );
+  if (gen.status !== 0) {
+    console.error("\u001b[31m\u2717\u001b[0m drizzle-kit generate failed. Check output above.");
+    process.exit(gen.status ?? 1);
+  }
+}
+
+const envLocal = path.join(repoRoot, ".env.local");
+const envExample = path.join(repoRoot, ".env.example");
+if (!fs.existsSync(envLocal) && fs.existsSync(envExample)) {
+  fs.copyFileSync(envExample, envLocal);
+  console.log("\u001b[32m\u2713\u001b[0m created .env.local from .env.example");
+}
+
 const port = await pickPort();
 spawnSync("node", [path.join(repoRoot, "scripts", "banner.mjs"), `Booting on http://localhost:${port}`], {
   stdio: "inherit",

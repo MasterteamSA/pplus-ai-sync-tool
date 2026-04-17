@@ -28,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <nav className="text-sm space-x-4 opacity-80">
                 <a href="/connect">Connect</a>
                 <a href="/snapshot">Snapshot</a>
+                <a href="/autopilot" className="font-semibold">Autopilot</a>
                 <a href="/match">Match</a>
                 <a href="/align">Align</a>
                 <a href="/diff">Diff</a>

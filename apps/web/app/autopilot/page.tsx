@@ -40,6 +40,9 @@ export default function AutopilotPage() {
   const [tgtSecret, setTgtSecret] = useState("");
   const [tgtCsr, setTgtCsr] = useState("");
   const [kinds, setKinds] = useState<string[]>([]);
+  const [includeBuiltins, setIncludeBuiltins] = useState(false);
+  const [includeUpdates, setIncludeUpdates] = useState(false);
+  const [includeDeletes, setIncludeDeletes] = useState(false);
 
   useEffect(() => {
     const envs = flow.getEnvs();
@@ -92,6 +95,9 @@ export default function AutopilotPage() {
         limitPerKind: 200,
         maxAiRetries: 2,
         dryRun,
+        includeBuiltins,
+        includeUpdates,
+        includeDeletes,
       }),
     });
     if (!res.body) {
@@ -194,6 +200,27 @@ export default function AutopilotPage() {
         <a href="/snapshot" className="ml-auto text-xs underline">
           {kindsOk ? "change" : "configure"}
         </a>
+      </section>
+
+      <section className="rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm">
+        <div className="text-xs uppercase opacity-60 mb-2 tracking-wide">Safe mode — all off by default</div>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={includeUpdates} onChange={(e) => setIncludeUpdates(e.target.checked)} />
+            <span>Include updates</span>
+            <span className="opacity-60">(overwrites existing target entities)</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={includeDeletes} onChange={(e) => setIncludeDeletes(e.target.checked)} />
+            <span>Include deletes</span>
+            <span className="opacity-60">(removes target-only entities)</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={includeBuiltins} onChange={(e) => setIncludeBuiltins(e.target.checked)} />
+            <span>Include system records</span>
+            <span className="opacity-60">(built-in logs/lookups/levels)</span>
+          </label>
+        </div>
       </section>
 
       <section className="flex flex-wrap items-center gap-3">

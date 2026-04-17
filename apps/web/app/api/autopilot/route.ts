@@ -24,7 +24,30 @@ const body = z.object({
   limitPerKind: z.number().int().min(1).max(500).default(200),
   maxAiRetries: z.number().int().min(0).max(3).default(1),
   dryRun: z.boolean().default(false),
+  // Safe-mode defaults: never touch system records, never delete on target,
+  // never re-write existing entities. Flip them explicitly to broaden scope.
+  includeBuiltins: z.boolean().default(false),
+  includeDeletes: z.boolean().default(false),
+  includeUpdates: z.boolean().default(false),
 });
+
+/**
+ * Detect "system/built-in" records so we never mutate them. Heuristics come
+ * from real PPlus payloads observed on pplusrua-prod:
+ *   - log.type === 1 means built-in (Task/Risk/Issue/…). type === 2 is custom.
+ *   - payload.canBeDeleted === false marks protected records (lookups, logs).
+ *   - Numeric id below a threshold on lookups (<1000) usually means seeded.
+ */
+function isBuiltin(kind: string, entity: { payload?: unknown }): boolean {
+  const p = entity.payload as Record<string, unknown> | undefined;
+  if (!p || typeof p !== "object") return false;
+  if (p.canBeDeleted === false) return true;
+  if (kind === "log" && p.type === 1) return true;
+  if (kind === "log" && typeof p.id === "number" && p.id <= 12) return true;
+  if (kind === "lookup" && typeof p.id === "number" && (p.id as number) < 1000) return true;
+  if (kind === "level") return true; // Levels are hierarchical; handled differently.
+  return false;
+}
 
 interface Envelope {
   type: "status" | "ai" | "op" | "phase" | "done" | "error";
@@ -52,6 +75,7 @@ export async function POST(req: Request) {
   }
   const input = parsed.data;
   const runId = `auto-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const { includeBuiltins, includeDeletes, includeUpdates } = input;
 
   // Seed a run row so audit_entries have a parent.
   try {
@@ -142,24 +166,32 @@ export async function POST(req: Request) {
           targetId?: string;
           label: string;
           payload?: unknown;
-          sourceEntity?: Entity;
+          sourceEntity?: Entity | undefined;
         }
         const ops: Op[] = [];
+        let skippedBuiltin = 0;
+        let skippedUpdate = 0;
+        let skippedDelete = 0;
         for (const kind of input.kinds) {
           const src = srcByKind[kind] ?? [];
           const tgt = tgtByKind[kind] ?? [];
-          const used = new Set<string>();
           const byId = new Map(tgt.map((t) => [t.id, t] as const));
           const byKey = new Map(tgt.filter((t) => t.key).map((t) => [t.key!, t] as const));
           const byName = new Map(
             tgt.map((t) => [t.name?.toLowerCase().trim(), t] as const),
           );
+          const usedTargetIds = new Set<string>();
           for (const s of src) {
             const m =
               byId.get(s.id) ??
               (s.key ? byKey.get(s.key) : undefined) ??
               byName.get(s.name?.toLowerCase().trim());
             if (!m) {
+              // CREATE
+              if (!includeBuiltins && isBuiltin(kind, s)) {
+                skippedBuiltin++;
+                continue;
+              }
               ops.push({
                 id: `${kind}:create:${s.id}`,
                 op: "create",
@@ -171,8 +203,17 @@ export async function POST(req: Request) {
               });
               continue;
             }
-            used.add(m.id);
+            usedTargetIds.add(m.id);
             if (s.hash && m.hash && s.hash === m.hash) continue;
+            // UPDATE
+            if (!includeUpdates) {
+              skippedUpdate++;
+              continue;
+            }
+            if (!includeBuiltins && (isBuiltin(kind, s) || isBuiltin(kind, m))) {
+              skippedBuiltin++;
+              continue;
+            }
             ops.push({
               id: `${kind}:update:${s.id}:${m.id}`,
               op: "update",
@@ -184,8 +225,41 @@ export async function POST(req: Request) {
               sourceEntity: s,
             });
           }
+          // DELETE (target-only entities)
+          if (includeDeletes) {
+            for (const t of tgt) {
+              if (usedTargetIds.has(t.id)) continue;
+              if (!includeBuiltins && isBuiltin(kind, t)) {
+                skippedBuiltin++;
+                continue;
+              }
+              ops.push({
+                id: `${kind}:delete:${t.id}`,
+                op: "delete",
+                kind,
+                targetId: t.id,
+                label: `Delete ${kind}: ${t.name}`,
+                sourceEntity: t,
+              });
+            }
+          } else {
+            const orphanCount = tgt.filter((t) => !usedTargetIds.has(t.id)).length;
+            skippedDelete += orphanCount;
+          }
         }
-        await send({ type: "status", phase: "diff", msg: `${ops.length} op(s) planned`, count: ops.length });
+        await send({
+          type: "status",
+          phase: "diff",
+          msg:
+            `${ops.length} op(s) planned` +
+            (skippedBuiltin ? ` · ${skippedBuiltin} system skipped` : "") +
+            (skippedUpdate ? ` · ${skippedUpdate} update(s) skipped (safe mode)` : "") +
+            (skippedDelete ? ` · ${skippedDelete} delete(s) skipped (safe mode)` : ""),
+          count: ops.length,
+          skippedBuiltin,
+          skippedUpdate,
+          skippedDelete,
+        });
 
         if (input.dryRun) {
           await send({ type: "done", phase: "done", msg: "dryRun — nothing applied", runId, planned: ops.length });
@@ -228,15 +302,22 @@ export async function POST(req: Request) {
               break;
             }
             lastError = res.error ?? "unknown";
+            // Certain errors mean the op will never succeed regardless of
+            // payload shape — stop immediately instead of burning AI turns.
+            const isProtected =
+              /HTTP\s+(405|422)/.test(lastError) ||
+              /not allowed|غير مسموح|not permitted/i.test(lastError);
             await send({
               type: "op",
               phase: "apply",
-              msg: `✗ ${op.label} — ${lastError}`,
+              msg: isProtected
+                ? `↷ ${op.label} — target refuses (${summarizeErr(lastError)})`
+                : `✗ ${op.label} — ${summarizeErr(lastError)}`,
               opId: op.id,
               result: "fail",
               attempt,
             });
-            if (attempt >= input.maxAiRetries) break;
+            if (isProtected || attempt >= input.maxAiRetries) break;
             // Ask Claude to repair.
             await send({ type: "ai", phase: "apply", msg: "Claude is proposing a fix…", opId: op.id });
             const targetSample = tgtByKind[op.kind]?.[0]?.payload;
@@ -311,5 +392,18 @@ function authConnector(env: z.infer<typeof envSchema>): RestConnector {
 function extractStatus(err: string): number {
   const m = err.match(/HTTP\s+(\d{3})/);
   return m ? Number(m[1]) : 500;
+}
+
+/** Strip HTML bodies and long JSON down to a human-readable single line. */
+function summarizeErr(err: string): string {
+  const s = err.replace(/<!DOCTYPE[\s\S]*?<\/html>/gi, "").replace(/\s+/g, " ").trim();
+  try {
+    const json = JSON.parse(s.replace(/^HTTP\s+\d{3}\s+/, ""));
+    const msg = (json as { error?: string; message?: string }).error ??
+                (json as { error?: string; message?: string }).message;
+    return msg ? `${(s.match(/HTTP\s+\d{3}/) ?? [""])[0]} ${msg}`.trim() : s.slice(0, 200);
+  } catch {
+    return s.slice(0, 200);
+  }
 }
 

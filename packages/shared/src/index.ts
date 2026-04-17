@@ -11,6 +11,13 @@ export const entityKindSchema = z.enum([
   "dashboard",
   "chartComponent",
   "source",
+  "processBuilder",
+  "approvalProcess",
+  "role",
+  "escalation",
+  "procurement",
+  "cardConfig",
+  "levelStatus",
 ]);
 
 export const authModeSchema = z.enum(["cookie", "bearer", "basic"]);
@@ -38,7 +45,11 @@ export const createRunSchema = z.object({
 
 export const ENTITY_PRESETS: Record<string, z.infer<typeof entityKindSchema>[]> = {
   "Schema only": ["level", "log", "property", "propertyStatus", "phaseGate", "lookup"],
-  "Schema + Workflows": ["level", "log", "property", "propertyStatus", "phaseGate", "lookup", "workflow"],
+  "Schema + Admin": [
+    "level", "log", "property", "propertyStatus", "phaseGate", "lookup",
+    "processBuilder", "approvalProcess", "role", "escalation", "procurement",
+    "cardConfig", "levelStatus",
+  ],
   "Schema + Dashboards": [
     "level", "log", "property", "propertyStatus", "phaseGate", "lookup",
     "dashboard", "chartComponent",
@@ -46,6 +57,8 @@ export const ENTITY_PRESETS: Record<string, z.infer<typeof entityKindSchema>[]> 
   Everything: [
     "level", "log", "property", "propertyStatus", "phaseGate", "lookup",
     "workflow", "dashboard", "chartComponent", "source",
+    "processBuilder", "approvalProcess", "role", "escalation", "procurement",
+    "cardConfig", "levelStatus",
   ],
 };
 

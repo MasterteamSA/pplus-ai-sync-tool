@@ -22,6 +22,12 @@ export interface EndpointSet {
   delete: (id: string) => string;
   /** Headers required beyond auth — per `dashboard_dialog_building_guide.md`. */
   headers?: Record<string, string>;
+  /**
+   * True for entity kinds that are scoped to a parent Level. The connector
+   * will snapshot Levels first, then iterate calling list / byId with each
+   * level id substituted into {levelId}.
+   */
+  perLevel?: boolean;
 }
 
 export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
@@ -96,6 +102,65 @@ export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
     create: "/service/api/source",
     update: (id) => `/service/api/source/${id}`,
     delete: (id) => `/service/api/source/${id}`,
+  },
+  // Per-level admin sections. Paths are the best educated guess based on the
+  // admin UI routes (/admin/level-managment/{id}/...); the connector lets the
+  // operator override any path in settings if a given instance differs.
+  processBuilder: {
+    list: "/service/api/level/{levelId}/processes",
+    byId: (id) => `/service/api/processes/${id}`,
+    create: "/service/api/level/{levelId}/processes",
+    update: (id) => `/service/api/processes/${id}`,
+    delete: (id) => `/service/api/processes/${id}`,
+    perLevel: true,
+  },
+  approvalProcess: {
+    list: "/service/api/level/{levelId}/approvals",
+    byId: (id) => `/service/api/approvals/${id}`,
+    create: "/service/api/level/{levelId}/approvals",
+    update: (id) => `/service/api/approvals/${id}`,
+    delete: (id) => `/service/api/approvals/${id}`,
+    perLevel: true,
+  },
+  role: {
+    list: "/service/api/level/{levelId}/roles",
+    byId: (id) => `/service/api/roles/${id}`,
+    create: "/service/api/level/{levelId}/roles",
+    update: (id) => `/service/api/roles/${id}`,
+    delete: (id) => `/service/api/roles/${id}`,
+    perLevel: true,
+  },
+  escalation: {
+    list: "/service/api/level/{levelId}/escalations",
+    byId: (id) => `/service/api/escalations/${id}`,
+    create: "/service/api/level/{levelId}/escalations",
+    update: (id) => `/service/api/escalations/${id}`,
+    delete: (id) => `/service/api/escalations/${id}`,
+    perLevel: true,
+  },
+  procurement: {
+    list: "/service/api/level/{levelId}/procurement",
+    byId: (id) => `/service/api/procurement/${id}`,
+    create: "/service/api/level/{levelId}/procurement",
+    update: (id) => `/service/api/procurement/${id}`,
+    delete: (id) => `/service/api/procurement/${id}`,
+    perLevel: true,
+  },
+  cardConfig: {
+    list: "/service/api/level/{levelId}/cards",
+    byId: (id) => `/service/api/cards/${id}`,
+    create: "/service/api/level/{levelId}/cards",
+    update: (id) => `/service/api/cards/${id}`,
+    delete: (id) => `/service/api/cards/${id}`,
+    perLevel: true,
+  },
+  levelStatus: {
+    list: "/service/api/level/{levelId}/statuses",
+    byId: (id) => `/service/api/statuses/${id}`,
+    create: "/service/api/level/{levelId}/statuses",
+    update: (id) => `/service/api/statuses/${id}`,
+    delete: (id) => `/service/api/statuses/${id}`,
+    perLevel: true,
   },
 };
 

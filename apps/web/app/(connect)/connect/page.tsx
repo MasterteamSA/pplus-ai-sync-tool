@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { flow } from "@/lib/flow-state";
 
 interface EnvRow {
   label: string;
@@ -25,6 +26,58 @@ export default function ConnectPage() {
   const [source, setSource] = useState<EnvRow>(emptyRow("source"));
   const [targets, setTargets] = useState<EnvRow[]>([emptyRow("target-1")]);
   const [bulk, setBulk] = useState("");
+  const hydrated = useRef(false);
+
+  // Hydrate from localStorage on mount so data survives navigation.
+  useEffect(() => {
+    const saved = flow.getEnvs();
+    if (saved.source) {
+      setSource({
+        label: saved.source.label,
+        baseUrl: saved.source.baseUrl,
+        authMode: saved.source.authMode,
+        secret: saved.source.secret ?? "",
+        csr: saved.source.csr ?? "",
+        status: saved.source.ok ? "ok" : "idle",
+      });
+    }
+    if (saved.targets.length > 0) {
+      setTargets(
+        saved.targets.map((t) => ({
+          label: t.label,
+          baseUrl: t.baseUrl,
+          authMode: t.authMode,
+          secret: t.secret ?? "",
+          csr: t.csr ?? "",
+          status: t.ok ? "ok" : "idle",
+        })),
+      );
+    }
+    hydrated.current = true;
+  }, []);
+
+  // Persist on every change.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    flow.setEnvs({
+      source: {
+        label: source.label,
+        baseUrl: source.baseUrl,
+        authMode: source.authMode,
+        secret: source.secret,
+        csr: source.csr,
+        ok: source.status === "ok",
+      },
+      targets: targets.map((t) => ({
+        label: t.label,
+        baseUrl: t.baseUrl,
+        authMode: t.authMode,
+        secret: t.secret,
+        csr: t.csr,
+        ok: t.status === "ok",
+      })),
+    });
+  }, [source, targets]);
 
   const addTarget = () => setTargets((t) => [...t, emptyRow(`target-${t.length + 1}`)]);
   const removeTarget = (i: number) => setTargets((t) => t.filter((_, idx) => idx !== i));

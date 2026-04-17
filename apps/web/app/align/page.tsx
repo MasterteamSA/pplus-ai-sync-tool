@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Decision {
   sourceKey: string;
@@ -47,6 +47,18 @@ const demoTarget = JSON.stringify(
   2,
 );
 
+const STATE_KEY = "pplus-sync:align-form";
+
+interface AlignFormState {
+  source: string;
+  target: string;
+  sourceLevels: string;
+  targetLevels: string;
+  levelMap: string;
+  useAi: boolean;
+  hint: string;
+}
+
 export default function AlignPage() {
   const [source, setSource] = useState(demoSource);
   const [target, setTarget] = useState(demoTarget);
@@ -58,6 +70,34 @@ export default function AlignPage() {
   const [result, setResult] = useState<AlignResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const hydrated = useRef(false);
+
+  // Hydrate form on mount so values survive navigation.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STATE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as AlignFormState;
+        if (s.source) setSource(s.source);
+        if (s.target) setTarget(s.target);
+        if (s.sourceLevels) setSourceLevels(s.sourceLevels);
+        if (s.targetLevels) setTargetLevels(s.targetLevels);
+        if (s.levelMap) setLevelMap(s.levelMap);
+        if (typeof s.useAi === "boolean") setUseAi(s.useAi);
+        if (s.hint) setHint(s.hint);
+      }
+    } finally {
+      hydrated.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    localStorage.setItem(
+      STATE_KEY,
+      JSON.stringify({ source, target, sourceLevels, targetLevels, levelMap, useAi, hint }),
+    );
+  }, [source, target, sourceLevels, targetLevels, levelMap, useAi, hint]);
 
   async function run() {
     setLoading(true);
@@ -102,12 +142,12 @@ export default function AlignPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <LabeledTextArea label="Source properties (JSON)" value={source} onChange={setSource} />
         <LabeledTextArea label="Target properties (JSON)" value={target} onChange={setTarget} />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <LabeledInput label="Source level names (comma-sep)" value={sourceLevels} onChange={setSourceLevels} />
         <LabeledInput label="Target level names (comma-sep)" value={targetLevels} onChange={setTargetLevels} />
         <LabeledInput label="Level map (JSON)" value={levelMap} onChange={setLevelMap} />

@@ -18,10 +18,30 @@ const KIND_LABELS: Record<EntityKind, { label: string; hint: string }> = {
   dashboard: { label: "Dashboards", hint: "Dashboard layouts and filter config" },
   chartComponent: { label: "Chart components", hint: "Chart widgets used on dashboards" },
   source: { label: "Sources", hint: "Level data-source bindings" },
+  // Per-level admin sections
+  processBuilder: { label: "Process builder", hint: "Workflow step definitions per level" },
+  approvalProcess: { label: "Approval processes", hint: "~50 approval toggles per level" },
+  role: { label: "Roles & permissions", hint: "RBAC roles and module permissions" },
+  escalation: { label: "Escalation chains", hint: "SLA-based escalation rules" },
+  procurement: { label: "Procurement stages", hint: "Procurement flow & contract stages" },
+  cardConfig: { label: "Cards management", hint: "Which fields appear on dashboard cards" },
+  levelStatus: { label: "Level statuses", hint: "Per-level status colors & formulas" },
 };
 
 const GROUPS: { title: string; kinds: EntityKind[] }[] = [
   { title: "Schema", kinds: ["level", "log", "property", "propertyStatus", "phaseGate", "lookup", "source"] },
+  {
+    title: "Per-level admin",
+    kinds: [
+      "processBuilder",
+      "approvalProcess",
+      "role",
+      "escalation",
+      "procurement",
+      "cardConfig",
+      "levelStatus",
+    ],
+  },
   { title: "Workflow", kinds: ["workflow"] },
   { title: "Dashboards", kinds: ["dashboard", "chartComponent"] },
 ];

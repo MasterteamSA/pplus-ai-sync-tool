@@ -9,6 +9,14 @@ export const ENTITY_KINDS = [
   "dashboard",
   "chartComponent",
   "source",
+  // Per-level admin sections (travel with each Level):
+  "processBuilder",  // /admin/level-managment/{id}/process-builder
+  "approvalProcess", // /admin/level-managment/{id}/manage-approval
+  "role",            // /admin/level-managment/{id}/roles
+  "escalation",      // /admin/level-managment/{id}/manage-escalation
+  "procurement",     // /admin/level-managment/{id}/manage-procurment
+  "cardConfig",      // /admin/level-managment/{id}/customize
+  "levelStatus",     // /admin/level-managment/{id}/statuses/{groupId}
 ] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];

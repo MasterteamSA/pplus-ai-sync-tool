@@ -315,18 +315,23 @@ export async function POST(req: Request) {
             .filter((p) => p !== undefined);
 
           while (true) {
-            const res = await tgtConn.applyChange(
-              {
-                id: op.id,
-                op: op.op,
-                kind: op.kind as never,
-                risk: "low",
-                ...(op.sourceId ? { sourceId: op.sourceId } : {}),
-                ...(op.targetId ? { targetId: op.targetId } : {}),
-                ...(payload !== undefined ? { after: payload } : {}),
-              },
-              overridePath ? { overridePath } : undefined,
-            );
+            let res: Awaited<ReturnType<typeof tgtConn.applyChange>>;
+            try {
+              res = await tgtConn.applyChange(
+                {
+                  id: op.id,
+                  op: op.op,
+                  kind: op.kind as never,
+                  risk: "low",
+                  ...(op.sourceId ? { sourceId: op.sourceId } : {}),
+                  ...(op.targetId ? { targetId: op.targetId } : {}),
+                  ...(payload !== undefined ? { after: payload } : {}),
+                },
+                overridePath ? { overridePath } : undefined,
+              );
+            } catch (err) {
+              res = { ok: false, error: `NETWORK ${(err as Error).message}` };
+            }
             if (res.ok) {
               ok = true;
               await send({
@@ -348,7 +353,8 @@ export async function POST(req: Request) {
             // or policy text. Validation / schema errors stay in the loop.
             const refusalText = /not allowed|not permitted|forbidden|غير مسموح/i.test(lastError);
             const isMethodNotAllowed = /HTTP\s+405/.test(lastError);
-            const isProtected = isMethodNotAllowed || refusalText;
+            const isNetworkError = /^NETWORK/.test(lastError);
+            const isProtected = isMethodNotAllowed || refusalText || isNetworkError;
 
             await send({
               type: "op",

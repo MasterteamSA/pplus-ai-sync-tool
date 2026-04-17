@@ -263,30 +263,50 @@ export class RestConnector implements PPlusConnector {
       const cleaned = p.replace(/^\//, "");
       const init: Record<string, unknown> = { headers, throwHttpErrors: false };
       if (method !== "delete" && json !== undefined) init.json = json;
-      const res = await this.queue.add(() =>
-        method === "post"
-          ? this.http.post(cleaned, init)
-          : method === "put"
-          ? this.http.put(cleaned, init)
-          : this.http.delete(cleaned, init),
-      );
-      // Read the body text once; try JSON parse. This guarantees we always
-      // have bytes to put in an error message even when the response is
-      // empty or non-JSON.
-      const raw = await res!.text().catch(() => "");
-      let body: T | null = null;
       try {
-        body = raw ? (JSON.parse(raw) as T) : null;
-      } catch {
-        body = null;
+        const res = await this.queue.add(() =>
+          method === "post"
+            ? this.http.post(cleaned, init)
+            : method === "put"
+            ? this.http.put(cleaned, init)
+            : this.http.delete(cleaned, init),
+        );
+        // Read the body text once; try JSON parse. This guarantees we always
+        // have bytes to put in an error message even when the response is
+        // empty or non-JSON.
+        const raw = await res!.text().catch(() => "");
+        let body: T | null = null;
+        try {
+          body = raw ? (JSON.parse(raw) as T) : null;
+        } catch {
+          body = null;
+        }
+        return { res: res!, body, errText: raw, networkError: null as Error | null };
+      } catch (err) {
+        // fetch failed (DNS, TLS, connection refused, …). Return a synthetic
+        // response so the caller can handle it uniformly instead of throwing.
+        return {
+          res: null as unknown as Response,
+          body: null,
+          errText: `NETWORK ${(err as Error).message}`,
+          networkError: err as Error,
+        };
       }
-      return { res: res!, body, errText: raw };
     };
 
-    const { res, body, errText } = await tryOne(path);
-    if (res.ok) return { ok: true, status: res.status, body, pathUsed: path };
+    const first = await tryOne(path);
+    if (first.networkError) {
+      return {
+        ok: false,
+        status: 0,
+        body: null,
+        pathUsed: path,
+        error: `NETWORK ${first.networkError.message} (target unreachable — check URL, DNS, VPN, or TLS cert)`,
+      };
+    }
+    if (first.res.ok) return { ok: true, status: first.res.status, body: first.body, pathUsed: path };
 
-    if (res.status === 404 || res.status === 405) {
+    if (first.res.status === 404 || first.res.status === 405) {
       const alt = path.startsWith("/service/api/")
         ? path.replace(/^\/service\/api\//, "/api/")
         : path.startsWith("/api/")
@@ -294,6 +314,15 @@ export class RestConnector implements PPlusConnector {
         : null;
       if (alt) {
         const retry = await tryOne(alt);
+        if (retry.networkError) {
+          return {
+            ok: false,
+            status: 0,
+            body: null,
+            pathUsed: alt,
+            error: `NETWORK ${retry.networkError.message}`,
+          };
+        }
         if (retry.res.ok) return { ok: true, status: retry.res.status, body: retry.body, pathUsed: alt };
         return {
           ok: false,
@@ -306,10 +335,10 @@ export class RestConnector implements PPlusConnector {
     }
     return {
       ok: false,
-      status: res.status,
-      body,
+      status: first.res.status,
+      body: first.body,
       pathUsed: path,
-      error: `HTTP ${res.status} ${errText.slice(0, 400)}`.trim(),
+      error: `HTTP ${first.res.status} ${first.errText.slice(0, 400)}`.trim(),
     };
   }
 

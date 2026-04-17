@@ -33,7 +33,10 @@ export interface PayloadFixInput {
   errorBody: string;
   /** The payload we sent that was rejected. */
   sentPayload: unknown;
-  /** A successful entity of the same kind from the target, if available. */
+  /**
+   * One or more successful entities of the same kind from the target.
+   * Pass an array to give Claude multiple reference shapes.
+   */
   targetSample?: unknown;
   /** A successful entity of the same kind from the source (reference). */
   sourceSample?: unknown;
@@ -76,7 +79,9 @@ export class AutopilotAi {
       `Sent payload:\n${JSON.stringify(input.sentPayload, null, 2)}`,
       `Server error body (truncated):\n${input.errorBody.slice(0, 1000)}`,
       input.targetSample
-        ? `A successful existing ${input.kind} on the target looks like:\n${JSON.stringify(input.targetSample, null, 2)}`
+        ? `Successful existing ${input.kind}(s) on the target${
+            Array.isArray(input.targetSample) ? ` (${(input.targetSample as unknown[]).length} samples)` : ""
+          }:\n${JSON.stringify(input.targetSample, null, 2)}`
         : `No target sample was available — infer shape from PPlus conventions above.`,
       input.sourceSample
         ? `The original ${input.kind} from source was:\n${JSON.stringify(input.sourceSample, null, 2)}`

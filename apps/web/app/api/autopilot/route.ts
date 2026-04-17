@@ -22,7 +22,14 @@ const body = z.object({
   target: envSchema,
   kinds: z.array(entityKindSchema).min(1),
   limitPerKind: z.number().int().min(1).max(500).default(200),
-  maxAiRetries: z.number().int().min(0).max(5).default(3),
+  /**
+   * Hard ceiling on AI repair attempts per op. The loop terminates early
+   * when Claude returns `ok:false` twice in a row (clear give-up) or when
+   * the same error repeats with no forward progress.
+   */
+  maxAiRetries: z.number().int().min(0).max(50).default(20),
+  /** Max consecutive "no safe fix" returns from Claude before we stop. */
+  maxStall: z.number().int().min(1).max(5).default(2),
   dryRun: z.boolean().default(false),
   // Safe-mode defaults: never touch system records, never delete on target,
   // never re-write existing entities. Flip them explicitly to broaden scope.
@@ -82,7 +89,7 @@ export async function POST(req: Request) {
   }
   const input = parsed.data;
   const runId = `auto-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const { includeBuiltins, includeDeletes, includeUpdates } = input;
+  const { includeBuiltins, includeDeletes, includeUpdates, maxStall } = input;
 
   // Seed a run row so audit_entries have a parent.
   try {
@@ -295,9 +302,19 @@ export async function POST(req: Request) {
           let payload = op.payload;
           let overridePath: string | undefined;
           let lastError = "";
+          let prevLastError = "";
           let ok = false;
+          let consecutiveStall = 0;
+          let consecutiveSameError = 0;
           const priorAttempts: string[] = [];
-          while (attempt <= input.maxAiRetries) {
+          // Provide Claude up to 3 successful target samples for richer
+          // reference shapes. If target bucket is smaller, slice shorter.
+          const targetSamples = (tgtByKind[op.kind] ?? [])
+            .slice(0, 3)
+            .map((e) => e.payload)
+            .filter((p) => p !== undefined);
+
+          while (true) {
             const res = await tgtConn.applyChange(
               {
                 id: op.id,
@@ -315,7 +332,7 @@ export async function POST(req: Request) {
               await send({
                 type: "op",
                 phase: "apply",
-                msg: `✓ ${op.label}`,
+                msg: `✓ ${op.label}${attempt > 0 ? ` (after ${attempt} AI fix${attempt === 1 ? "" : "es"})` : ""}`,
                 opId: op.id,
                 result: "ok",
                 ...(res.newId ? { newId: res.newId } : {}),
@@ -323,46 +340,82 @@ export async function POST(req: Request) {
               });
               break;
             }
+
+            prevLastError = lastError;
             lastError = res.error ?? "unknown";
-            // Fast-skip only for clear server refusals (method-not-allowed,
-            // explicit "not allowed" text). Validation errors (422/400 with
-            // "required"/"empty"/"invalid") are recoverable — let Claude
-            // keep trying.
+
+            // Only hard stop for explicit server refusals — method-not-allowed
+            // or policy text. Validation / schema errors stay in the loop.
             const refusalText = /not allowed|not permitted|forbidden|غير مسموح/i.test(lastError);
             const isMethodNotAllowed = /HTTP\s+405/.test(lastError);
             const isProtected = isMethodNotAllowed || refusalText;
+
             await send({
               type: "op",
               phase: "apply",
               msg: isProtected
                 ? `↷ ${op.label} — target refuses (${summarizeErr(lastError)})`
-                : `✗ ${op.label} — ${summarizeErr(lastError)}`,
+                : `✗ ${op.label} [attempt ${attempt + 1}] — ${summarizeErr(lastError)}`,
               opId: op.id,
               result: "fail",
               attempt,
             });
-            if (isProtected || attempt >= input.maxAiRetries) break;
-            // Ask Claude to repair.
-            await send({ type: "ai", phase: "apply", msg: "Claude is proposing a fix…", opId: op.id });
-            const targetSample = tgtByKind[op.kind]?.[0]?.payload;
+            if (isProtected) break;
+            if (attempt >= input.maxAiRetries) {
+              await send({
+                type: "ai",
+                phase: "apply",
+                msg: `stopping — hit hard cap of ${input.maxAiRetries} AI retries`,
+                opId: op.id,
+              });
+              break;
+            }
+
+            // Detect same-error stall (server returning identical response
+            // twice). Flag Claude so it proposes a structurally different
+            // approach instead of minor tweaks.
+            const sameAsLast = prevLastError && lastError === prevLastError;
+            if (sameAsLast) consecutiveSameError++;
+            else consecutiveSameError = 0;
+
+            await send({ type: "ai", phase: "apply", msg: `Claude is proposing a fix… (attempt ${attempt + 1})`, opId: op.id });
             const fix = await ai.fixPayload({
               kind: op.kind,
               status: extractStatus(lastError),
               errorBody: lastError,
               sentPayload: payload,
-              ...(targetSample !== undefined ? { targetSample } : {}),
+              ...(targetSamples.length > 0 ? { targetSample: targetSamples } : {}),
               ...(op.sourceEntity?.payload !== undefined
                 ? { sourceSample: op.sourceEntity.payload }
                 : {}),
-              priorAttempts,
+              priorAttempts: [
+                ...priorAttempts,
+                ...(consecutiveSameError >= 1
+                  ? [`SAME ERROR REPEATED — try a structurally different approach (different wrapper shape, different field names, different endpoint).`]
+                  : []),
+              ],
             });
             if (!fix.ok) {
-              await send({ type: "ai", phase: "apply", msg: `Claude: no safe fix — ${fix.reason}`, opId: op.id });
-              break;
+              consecutiveStall++;
+              await send({
+                type: "ai",
+                phase: "apply",
+                msg: `Claude: no safe fix — ${fix.reason}${consecutiveStall < maxStall ? " · retrying with richer context" : " · giving up"}`,
+                opId: op.id,
+              });
+              if (consecutiveStall >= maxStall) break;
+              // Keep looping — the next iteration will re-invoke Claude with
+              // one more "no-fix" in priorAttempts, which often unblocks.
+              priorAttempts.push(`attempt ${attempt + 1}: Claude declined — ${fix.reason}`);
+              attempt++;
+              continue;
             }
+            consecutiveStall = 0;
             const pathNote = fix.altPath ? ` · altPath=${fix.altPath}` : "";
             await send({ type: "ai", phase: "apply", msg: `Claude: ${fix.reason}${pathNote}`, opId: op.id });
-            priorAttempts.push(fix.reason + (fix.altPath ? ` (tried altPath=${fix.altPath})` : ""));
+            priorAttempts.push(
+              `attempt ${attempt + 1}: HTTP ${extractStatus(lastError)} → ${fix.reason}${fix.altPath ? ` (altPath=${fix.altPath})` : ""}`,
+            );
             payload = fix.payload;
             overridePath = fix.altPath;
             attempt++;

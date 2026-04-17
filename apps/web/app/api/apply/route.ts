@@ -3,9 +3,12 @@ import { z } from "zod";
 import { RestConnector } from "@pplus-sync/connectors";
 import { entityKindSchema } from "@pplus-sync/shared";
 import type { DiffOp } from "@pplus-sync/core";
+import { NEVER_SYNCABLE_KINDS, isBuiltin } from "@/lib/sync-filters";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const entityShape = z.object({ payload: z.unknown().optional() }).nullish();
 
 const opSchema = z.object({
   id: z.string(),
@@ -17,6 +20,8 @@ const opSchema = z.object({
   after: z.unknown().optional(),
   payload: z.unknown().optional(),
   label: z.string().optional(),
+  sourceEntity: entityShape,
+  targetEntity: entityShape,
 });
 
 const body = z.object({
@@ -30,6 +35,10 @@ const body = z.object({
   ops: z.array(opSchema).min(1),
   dryRun: z.boolean().default(false),
   continueOnError: z.boolean().default(true),
+  /** Server-side safe-mode backstop — identical semantics to /autopilot. */
+  includeBuiltins: z.boolean().default(false),
+  includeUpdates: z.boolean().default(true),
+  includeDeletes: z.boolean().default(true),
 });
 
 /**
@@ -77,7 +86,33 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
   }
-  const { target, ops, dryRun, continueOnError } = parsed.data;
+  const { target, ops, dryRun, continueOnError, includeBuiltins, includeUpdates, includeDeletes } = parsed.data;
+
+  // Server-side guardrails: drop ops the target will always refuse. Report
+  // them as "skipped" with the reason so the client can surface why nothing
+  // happened on those ids.
+  const skipped: OpResult[] = [];
+  const safeOps = ops.filter((op) => {
+    if (NEVER_SYNCABLE_KINDS.has(op.kind)) {
+      skipped.push({ id: op.id, ok: false, error: `skipped — kind '${op.kind}' not syncable via flat CRUD` });
+      return false;
+    }
+    if (!includeUpdates && op.op === "update") {
+      skipped.push({ id: op.id, ok: false, error: "skipped — updates off" });
+      return false;
+    }
+    if (!includeDeletes && op.op === "delete") {
+      skipped.push({ id: op.id, ok: false, error: "skipped — deletes off" });
+      return false;
+    }
+    if (!includeBuiltins) {
+      if (isBuiltin(op.kind, op.sourceEntity) || isBuiltin(op.kind, op.targetEntity)) {
+        skipped.push({ id: op.id, ok: false, error: "skipped — system/built-in record" });
+        return false;
+      }
+    }
+    return true;
+  });
 
   const extraHeaders = target.csr ? { csr: target.csr } : undefined;
   const auth =
@@ -98,7 +133,7 @@ export async function POST(req: Request) {
   const t0 = Date.now();
   const results: OpResult[] = [];
 
-  for (const rawOp of ops) {
+  for (const rawOp of safeOps) {
     if (dryRun) {
       results.push({ id: rawOp.id, ok: true, newId: "dry-run" });
       continue;
@@ -138,17 +173,20 @@ export async function POST(req: Request) {
     }
   }
 
-  const ok = results.every((r) => r.ok);
+  const combined: OpResult[] = [...results, ...skipped];
+  const ok = combined.every((r) => r.ok);
   const applied = results.filter((r) => r.ok).length;
   const failed = results.filter((r) => !r.ok).length;
+  const skippedCount = skipped.length;
 
   return NextResponse.json({
     ok,
     ms: Date.now() - t0,
     applied,
     failed,
+    skipped: skippedCount,
     total: ops.length,
-    results,
+    results: combined,
     dryRun,
     targetBaseUrl: connector.baseUrl,
   });

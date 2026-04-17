@@ -37,6 +37,9 @@ export interface DiffOp {
   risk: "low" | "med" | "high";
   /** Source entity payload sent to the target on create/update. */
   payload?: unknown;
+  /** Reference shapes used by the filter to detect built-in records. */
+  sourceEntity?: { payload?: unknown } | null;
+  targetEntity?: { payload?: unknown } | null;
 }
 
 export interface RunRecord {

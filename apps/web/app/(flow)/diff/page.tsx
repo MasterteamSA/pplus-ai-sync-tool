@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { flow, type DiffOp } from "@/lib/flow-state";
+import { applySafeModeFilter, NEVER_SYNCABLE_KINDS, isBuiltin } from "@/lib/sync-filters";
 
 interface CaptureEntity {
   id: string;
@@ -67,6 +68,7 @@ function pairEntities(
         detail: s.key ? `key=${s.key}` : `id=${s.id}`,
         risk: riskFor("create", kind),
         payload: s.payload ?? s,
+        sourceEntity: { payload: s.payload ?? s },
       });
       continue;
     }
@@ -84,6 +86,8 @@ function pairEntities(
         : `source ${s.id} → target ${match.id}`,
       risk: riskFor("update", kind),
       payload: s.payload ?? s,
+      sourceEntity: { payload: s.payload ?? s },
+      targetEntity: { payload: match.payload ?? match },
     });
   }
 
@@ -97,6 +101,7 @@ function pairEntities(
       label: `Delete ${kind}: ${t.name}`,
       detail: t.key ? `key=${t.key}` : `id=${t.id}`,
       risk: riskFor("delete", kind),
+      targetEntity: { payload: t.payload ?? t },
     });
   }
 
@@ -112,6 +117,9 @@ export default function DiffPage() {
   const [building, setBuilding] = useState(false);
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
+  const [includeBuiltins, setIncludeBuiltins] = useState(false);
+  const [includeUpdates, setIncludeUpdates] = useState(false);
+  const [includeDeletes, setIncludeDeletes] = useState(false);
 
   useEffect(() => {
     const stored = flow.getDiff();
@@ -190,23 +198,36 @@ export default function DiffPage() {
       if (!srcCap.ok) throw new Error(`source capture: ${srcCap.error ?? "failed"}`);
       if (!tgtCap.ok) throw new Error(`target capture: ${tgtCap.error ?? "failed"}`);
 
-      const allOps: DiffOp[] = [];
+      const rawOps: DiffOp[] = [];
       for (const kind of kinds) {
         const s = srcCap.entities?.[kind] ?? [];
         const t = tgtCap.entities?.[kind] ?? [];
-        allOps.push(...pairEntities(kind, s, t));
+        rawOps.push(...pairEntities(kind, s, t));
       }
-      setOps(allOps);
-      setSelected(new Set(allOps.map((o) => o.id)));
-      flow.setDiff(allOps);
+      const { kept, dropped } = applySafeModeFilter(rawOps, {
+        includeBuiltins,
+        includeUpdates,
+        includeDeletes,
+      });
+      setOps(kept);
+      setSelected(new Set(kept.map((o) => o.id)));
+      flow.setDiff(kept);
 
       const srcErrs = srcCap.errors ? Object.entries(srcCap.errors) : [];
       const tgtErrs = tgtCap.errors ? Object.entries(tgtCap.errors) : [];
       const warn = [...srcErrs, ...tgtErrs].slice(0, 3);
+      const dropBreakdown = dropped.reduce<Record<string, number>>((acc, d) => {
+        acc[d.reason] = (acc[d.reason] ?? 0) + 1;
+        return acc;
+      }, {});
+      const dropSummary = Object.entries(dropBreakdown)
+        .map(([reason, n]) => `${n} ${reason}`)
+        .join(" · ");
       setBuildStatus(
-        `Built ${allOps.length} op(s) from ${kinds.length} kind(s).` +
+        `Built ${kept.length} op(s)` +
+          (dropped.length ? ` (filtered ${dropped.length}: ${dropSummary})` : "") +
           (warn.length
-            ? ` Warnings: ${warn.map(([k, m]) => `${k}: ${m}`).join("; ")}${srcErrs.length + tgtErrs.length > warn.length ? "…" : ""}`
+            ? ` · warnings: ${warn.map(([k, m]) => `${k}: ${m}`).join("; ")}${srcErrs.length + tgtErrs.length > warn.length ? "…" : ""}`
             : ""),
       );
     } catch (e) {
@@ -252,6 +273,24 @@ export default function DiffPage() {
           and ask Claude to explain the changes in plain English.
         </p>
       </div>
+
+      <section className="rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm">
+        <div className="text-xs uppercase opacity-60 mb-2 tracking-wide">Safe mode — all off by default</div>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={includeUpdates} onChange={(e) => setIncludeUpdates(e.target.checked)} />
+            <span>Include updates</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={includeDeletes} onChange={(e) => setIncludeDeletes(e.target.checked)} />
+            <span>Include deletes</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={includeBuiltins} onChange={(e) => setIncludeBuiltins(e.target.checked)} />
+            <span>Include system records</span>
+          </label>
+        </div>
+      </section>
 
       <section className="flex flex-wrap items-center gap-3">
         <button

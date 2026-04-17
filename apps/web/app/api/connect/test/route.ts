@@ -7,6 +7,7 @@ const body = z.object({
   baseUrl: z.string().url(),
   authMode: z.enum(["cookie", "bearer", "basic"]),
   secret: z.string().optional().default(""),
+  csr: z.string().optional().default(""),
 });
 
 export async function POST(req: Request) {
@@ -14,16 +15,22 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "invalid input" }, { status: 400 });
   }
-  const { label, baseUrl, authMode, secret } = parsed.data;
+  const { label, baseUrl, authMode, secret, csr } = parsed.data;
+
+  const extraHeaders = csr ? { csr } : undefined;
 
   const auth =
     authMode === "cookie"
-      ? { mode: "cookie" as const, cookie: secret }
+      ? { mode: "cookie" as const, cookie: secret, ...(extraHeaders ? { extraHeaders } : {}) }
       : authMode === "bearer"
-      ? { mode: "bearer" as const, bearer: secret }
+      ? { mode: "bearer" as const, bearer: secret, ...(extraHeaders ? { extraHeaders } : {}) }
       : (() => {
           const [user, ...rest] = secret.split(":");
-          return { mode: "basic" as const, basic: { user: user ?? "", pass: rest.join(":") } };
+          return {
+            mode: "basic" as const,
+            basic: { user: user ?? "", pass: rest.join(":") },
+            ...(extraHeaders ? { extraHeaders } : {}),
+          };
         })();
 
   const connector = new RestConnector({ label, baseUrl, auth });

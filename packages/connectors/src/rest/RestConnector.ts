@@ -47,13 +47,17 @@ function originOf(url: string): string {
  * proves the host is real and answering (just rejecting this auth).
  */
 const CONNECTION_PROBES = [
+  // Real PPlus layout — base path is /service/api/, not /api/.
+  // Identity + currentUser endpoints come first because they verify auth.
+  "service/api/identity/users/current",
+  "service/api/users/current",
+  "service/api/Dashboards",
+  "service/api/identity/Groups",
+  // Fallbacks for older / non-standard installs.
   "api/user/current",
+  "api/users/current",
   "api/me",
   "api/account/me",
-  "api/users/me",
-  "user/current",
-  "Home/Cards",
-  "",
 ];
 
 interface RawEntity {

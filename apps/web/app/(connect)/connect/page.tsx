@@ -7,6 +7,7 @@ interface EnvRow {
   baseUrl: string;
   authMode: "cookie" | "bearer" | "basic";
   secret: string;
+  csr: string;
   status?: "idle" | "testing" | "ok" | "error";
   statusDetail?: string;
 }
@@ -16,6 +17,7 @@ const emptyRow = (label: string): EnvRow => ({
   baseUrl: "",
   authMode: "cookie",
   secret: "",
+  csr: "",
   status: "idle",
 });
 
@@ -39,6 +41,7 @@ export default function ConnectPage() {
         baseUrl: u,
         authMode: "cookie",
         secret: "",
+        csr: "",
         status: "idle",
       })),
     );
@@ -58,6 +61,7 @@ export default function ConnectPage() {
           baseUrl: row.baseUrl,
           authMode: row.authMode,
           secret: row.secret,
+          csr: row.csr,
         }),
       });
       const body = (await res.json().catch(() => ({}))) as {
@@ -247,6 +251,21 @@ function EnvCard({
           />
         </label>
       </div>
+      <label className="block">
+        <span className="text-xs opacity-70">
+          CSR token{" "}
+          <span className="opacity-60">
+            (PPlus anti-CSRF; from <code>localStorage.getItem(&apos;csr&apos;)</code> — required by chart &amp; dashboard endpoints)
+          </span>
+        </span>
+        <input
+          value={row.csr}
+          onChange={(e) => set("csr", e.target.value)}
+          type="password"
+          placeholder="optional"
+          className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm font-mono"
+        />
+      </label>
       {row.statusDetail && (
         <div className="text-xs opacity-70">{row.statusDetail}</div>
       )}

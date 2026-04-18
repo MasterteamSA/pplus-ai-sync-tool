@@ -3,16 +3,15 @@ import type { EntityKind } from "@pplus-sync/core";
 /**
  * Real PPlus REST endpoints for every sync-able configuration surface.
  *
- * Base path: all paths resolve under the origin (e.g. https://inst.example)
- * and typically route through `/service/api/...`; the connector accepts
- * both `/service/api/...` and `/api/...` style paths thanks to
- * originOf(baseUrl) + per-instance redirects. Paths captured from
- * knowledge chunks admin-overview and admin-remaining-tabs.
- *
  * Scopes:
- *   - global:  one call per instance
+ *   - global:   one call per instance
  *   - perLevel: iterate over captured Levels; {levelId} is substituted
- *   - perLog:  iterate over captured Logs;   {logId}   is substituted
+ *   - perLog:   iterate over captured Logs;   {logId}   is substituted
+ *
+ * Path variables:
+ *   {levelId}  — substituted with the actual level ID
+ *   {logId}    — substituted with the actual log ID
+ *   {schemaId} — substituted with property/level ID for status endpoints
  */
 
 export type Scope = "global" | "perLevel" | "perLog";
@@ -23,10 +22,8 @@ export interface EndpointSet {
   create: string;
   update: (id: string) => string;
   delete: (id: string) => string;
-  /** Headers required beyond auth (e.g. `csr` for chart endpoints). */
   headers?: Record<string, string>;
   scope: Scope;
-  /** Kept for backwards compatibility with older connector code paths. */
   perLevel?: boolean;
 }
 
@@ -64,10 +61,10 @@ export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
   },
   logProperty: {
     list: log("/Properties"),
-    byId: (id) => `${L}/LogProperties/${id}`,
+    byId: (id) => `${L}/Properties/${id}`,
     create: log("/Properties"),
-    update: (id) => `${L}/LogProperties/${id}`,
-    delete: (id) => `${L}/LogProperties/${id}`,
+    update: (id) => `${L}/Properties/${id}`,
+    delete: (id) => `${L}/Properties/${id}`,
     scope: "perLog",
   },
   levelSection: {
@@ -80,6 +77,9 @@ export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
     perLevel: true,
   },
   propertyStatus: {
+    // Status endpoints are per-property: /properties/{propertyId}/Status
+    // During snapshot, we iterate over properties within each level.
+    // The {schemaId} will be resolved to the property ID.
     list: `${L}/properties/{schemaId}/Status`,
     byId: (id) => `${L}/properties/Status/${id}`,
     create: `${L}/properties/{schemaId}/Status`,
@@ -115,11 +115,12 @@ export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
     scope: "global",
   },
   source: {
-    list: `${L}/source`,
-    byId: (id) => `${L}/source/${id}`,
-    create: `${L}/source`,
-    update: (id) => `${L}/source/${id}`,
-    delete: (id) => `${L}/source/${id}`,
+    // Level connections (parent-child). Fetched globally from SchemaLevelsController.
+    list: `${L}/SchemaLevels/connections`,
+    byId: (id) => `${L}/SchemaLevels/connections/${id}`,
+    create: `${L}/SchemaLevels/connections`,
+    update: (id) => `${L}/SchemaLevels/connections/update`,
+    delete: (id) => `${L}/SchemaLevels/connections/${id}`,
     scope: "global",
   },
 
@@ -236,19 +237,19 @@ export const ENDPOINTS: Record<EntityKind, EndpointSet> = {
 
   // ── Global admin ──────────────────────────────────────────────────────
   user: {
-    list: `${L}/Users`,
-    byId: (id) => `${L}/Users/${id}`,
-    create: `${L}/Users`,
-    update: (id) => `${L}/Users/${id}`,
-    delete: (id) => `${L}/Users/${id}`,
+    list: `${L}/identity/Users`,
+    byId: (id) => `${L}/identity/Users/${id}`,
+    create: `${L}/identity/Users`,
+    update: (id) => `${L}/identity/Users/${id}`,
+    delete: (id) => `${L}/identity/Users/${id}`,
     scope: "global",
   },
   group: {
-    list: `${L}/Groups`,
-    byId: (id) => `${L}/Groups/${id}`,
-    create: `${L}/Groups`,
-    update: (id) => `${L}/Groups/${id}`,
-    delete: (id) => `${L}/Groups/${id}`,
+    list: `${L}/identity/Groups`,
+    byId: (id) => `${L}/identity/Groups/${id}`,
+    create: `${L}/identity/Groups`,
+    update: (id) => `${L}/identity/Groups/${id}`,
+    delete: (id) => `${L}/identity/Groups/${id}`,
     scope: "global",
   },
   setting: {

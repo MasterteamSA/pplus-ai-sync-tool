@@ -3,6 +3,91 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flow } from "@/lib/flow-state";
 
+const ENTITY_PRESETS: Record<string, string[]> = {
+  "Schema only": [
+    "level", "log", "property", "logProperty", "levelSection",
+    "propertyStatus", "levelStatus", "phaseGate", "lookup",
+  ],
+  "Schema + Admin": [
+    "level", "log", "property", "logProperty", "levelSection",
+    "propertyStatus", "levelStatus", "phaseGate", "lookup",
+    "levelAttachedLogs", "role", "escalation", "procurement",
+    "cardConfig", "processBuilder", "approvalProcess", "codeBuilder",
+    "notification",
+  ],
+  "Schema + Dashboards": [
+    "level", "log", "property", "logProperty", "propertyStatus", "phaseGate",
+    "lookup", "dashboard", "chartComponent",
+  ],
+  "Global admin": [
+    "user", "group", "setting", "holiday", "accessibility",
+    "classification", "scheduleView", "delegation", "workflow",
+  ],
+  Everything: [
+    "level", "log", "property", "logProperty", "levelSection",
+    "propertyStatus", "levelStatus", "phaseGate", "lookup", "source",
+    "levelAttachedLogs", "role", "escalation", "procurement",
+    "cardConfig", "processBuilder", "approvalProcess", "codeBuilder",
+    "notification", "workflow",
+    "dashboard", "chartComponent",
+    "user", "group", "setting", "holiday", "accessibility",
+    "classification", "scheduleView", "delegation",
+  ],
+};
+
+const KIND_GROUPS: { title: string; kinds: { value: string; label: string }[] }[] = [
+  {
+    title: "Schema",
+    kinds: [
+      { value: "level", label: "Levels" },
+      { value: "log", label: "Logs" },
+      { value: "property", label: "Properties" },
+      { value: "logProperty", label: "Log Properties" },
+      { value: "levelSection", label: "Sections" },
+      { value: "propertyStatus", label: "Property Statuses" },
+      { value: "levelStatus", label: "Level Statuses" },
+      { value: "phaseGate", label: "Phase Gates" },
+      { value: "lookup", label: "Lookups" },
+      { value: "source", label: "Level Connections" },
+    ],
+  },
+  {
+    title: "Level Admin",
+    kinds: [
+      { value: "levelAttachedLogs", label: "Level-Log Bindings" },
+      { value: "role", label: "Roles" },
+      { value: "escalation", label: "Escalation" },
+      { value: "procurement", label: "Procurement" },
+      { value: "cardConfig", label: "Card Config" },
+      { value: "processBuilder", label: "Process Builder" },
+      { value: "approvalProcess", label: "Approvals" },
+      { value: "codeBuilder", label: "Code Builder" },
+      { value: "notification", label: "Notifications" },
+      { value: "workflow", label: "Workflows" },
+    ],
+  },
+  {
+    title: "Dashboards",
+    kinds: [
+      { value: "dashboard", label: "Dashboards" },
+      { value: "chartComponent", label: "Chart Components" },
+    ],
+  },
+  {
+    title: "Global Admin",
+    kinds: [
+      { value: "user", label: "Users" },
+      { value: "group", label: "Groups" },
+      { value: "setting", label: "Settings" },
+      { value: "holiday", label: "Holidays" },
+      { value: "accessibility", label: "Accessibility" },
+      { value: "classification", label: "Classification" },
+      { value: "scheduleView", label: "Schedule Views" },
+      { value: "delegation", label: "Delegations" },
+    ],
+  },
+];
+
 interface Event {
   type: "status" | "ai" | "op" | "phase" | "done" | "error";
   phase: "init" | "capture" | "diff" | "apply" | "done";
@@ -41,7 +126,7 @@ export default function AutopilotPage() {
   const [tgtCsr, setTgtCsr] = useState("");
   const [kinds, setKinds] = useState<string[]>([]);
   const [includeBuiltins, setIncludeBuiltins] = useState(false);
-  const [includeUpdates, setIncludeUpdates] = useState(false);
+  const [includeUpdates, setIncludeUpdates] = useState(true);
   const [includeDeletes, setIncludeDeletes] = useState(false);
 
   useEffect(() => {
@@ -59,11 +144,12 @@ export default function AutopilotPage() {
       setTgtSecret(t0.secret ?? "");
       setTgtCsr(t0.csr ?? "");
     }
-    setKinds(flow.getKinds());
+    const saved = flow.getKinds();
+    const preset = ENTITY_PRESETS["Schema only"] as string[];
+    setKinds(saved.length > 0 ? saved : preset);
     setReady(true);
   }, []);
 
-  // Persist envs on every change so /connect + other pages stay in sync.
   useEffect(() => {
     if (!ready) return;
     flow.setEnvs({
@@ -74,12 +160,26 @@ export default function AutopilotPage() {
     });
   }, [ready, srcUrl, srcAuth, srcSecret, srcCsr, tgtUrl, tgtAuth, tgtSecret, tgtCsr]);
 
+  useEffect(() => {
+    if (!ready) return;
+    flow.setKinds(kinds);
+  }, [ready, kinds]);
+
   const srcOk = ready && !!srcUrl && !!srcSecret;
   const tgtOk = ready && !!tgtUrl && !!tgtSecret;
   const kindsOk = ready && kinds.length > 0;
+
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [events]);
+
+  function toggleKind(k: string) {
+    setKinds((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
+  }
+
+  function applyPreset(name: string) {
+    setKinds(ENTITY_PRESETS[name] || []);
+  }
 
   async function run(dryRun: boolean) {
     if (!srcOk || !tgtOk || !kindsOk) return;
@@ -92,8 +192,8 @@ export default function AutopilotPage() {
         source: { label: "source", baseUrl: srcUrl, authMode: srcAuth, secret: srcSecret, csr: srcCsr },
         target: { label: "target-1", baseUrl: tgtUrl, authMode: tgtAuth, secret: tgtSecret, csr: tgtCsr },
         kinds,
-        limitPerKind: 200,
-        maxAiRetries: 2,
+        limitPerKind: 500,
+        maxAiRetries: 40,
         dryRun,
         includeBuiltins,
         includeUpdates,
@@ -138,9 +238,7 @@ export default function AutopilotPage() {
               });
             }
           }
-        } catch {
-          /* ignore */
-        }
+        } catch { /* ignore */ }
       }
     }
     setRunning(false);
@@ -157,12 +255,12 @@ export default function AutopilotPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Autopilot</h1>
-        <p className="mt-2 opacity-80 max-w-2xl">
-          One click: capture source + target, compute diff, apply with Claude in the
-          loop — on any POST failure Claude inspects the server error + a
-          real target sample and proposes a fix, then the tool retries. Every
-          event is streamed here and persisted to the run audit log.
+        <h1 className="text-2xl font-semibold tracking-tight">Autopilot Sync</h1>
+        <p className="mt-2 opacity-80 max-w-2xl text-sm">
+          One click: capture source + target, compute diff, apply with Claude
+          self-healing. Operations are applied in dependency order
+          (levels → logs → properties → statuses → dashboards).
+          Every event is streamed and persisted to the audit log.
         </p>
       </div>
 
@@ -193,43 +291,83 @@ export default function AutopilotPage() {
         />
       </section>
 
-      <section className="rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm flex items-center gap-3">
-        <span className={`inline-block size-2 rounded-full ${kindsOk ? "bg-green-500" : "bg-red-500"}`} />
-        <span className="font-medium">Kinds:</span>
-        <span className="opacity-75">{kindsOk ? `${kinds.length} selected` : "none selected"}</span>
-        <a href="/snapshot" className="ml-auto text-xs underline">
-          {kindsOk ? "change" : "configure"}
-        </a>
+      {/* ── Kind Selector ── */}
+      <section className="rounded-lg border border-black/10 dark:border-white/10 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="font-medium flex items-center gap-2">
+            <span className={`inline-block size-2 rounded-full ${kindsOk ? "bg-green-500" : "bg-red-500"}`} />
+            Entity Kinds ({kinds.length} selected)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.keys(ENTITY_PRESETS).map((name) => (
+              <button
+                key={name}
+                onClick={() => applyPreset(name)}
+                className="text-xs px-2 py-1 rounded border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+              >
+                {name}
+              </button>
+            ))}
+            <button
+              onClick={() => setKinds([])}
+              className="text-xs px-2 py-1 rounded border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {KIND_GROUPS.map((group) => (
+            <div key={group.title}>
+              <div className="text-xs uppercase opacity-50 tracking-wide mb-1">{group.title}</div>
+              <div className="space-y-0.5">
+                {group.kinds.map((k) => (
+                  <label key={k.value} className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={kinds.includes(k.value)}
+                      onChange={() => toggleKind(k.value)}
+                      className="rounded"
+                    />
+                    <span>{k.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
+      {/* ── Safe Mode ── */}
       <section className="rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm">
-        <div className="text-xs uppercase opacity-60 mb-2 tracking-wide">Safe mode — all off by default</div>
+        <div className="text-xs uppercase opacity-60 mb-2 tracking-wide">Sync mode</div>
         <div className="flex flex-wrap items-center gap-4">
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={includeUpdates} onChange={(e) => setIncludeUpdates(e.target.checked)} />
             <span>Include updates</span>
-            <span className="opacity-60">(overwrites existing target entities)</span>
+            <span className="opacity-60">(overwrite existing target entities)</span>
           </label>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={includeDeletes} onChange={(e) => setIncludeDeletes(e.target.checked)} />
             <span>Include deletes</span>
-            <span className="opacity-60">(removes target-only entities)</span>
+            <span className="opacity-60">(remove target-only entities)</span>
           </label>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={includeBuiltins} onChange={(e) => setIncludeBuiltins(e.target.checked)} />
             <span>Include system records</span>
-            <span className="opacity-60">(built-in logs/lookups/levels)</span>
+            <span className="opacity-60">(built-in logs/lookups)</span>
           </label>
         </div>
       </section>
 
+      {/* ── Run buttons ── */}
       <section className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => run(false)}
           disabled={running || !srcOk || !tgtOk || !kindsOk}
           className="rounded-md bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
-          {running ? "Running autopilot…" : "Run autopilot"}
+          {running ? "Running…" : "Run Sync"}
         </button>
         <button
           onClick={() => run(true)}
@@ -255,6 +393,7 @@ export default function AutopilotPage() {
         )}
       </section>
 
+      {/* ── Log ── */}
       <section
         ref={logRef}
         className="rounded-lg border border-black/10 dark:border-white/10 p-3 bg-black/5 dark:bg-white/5 font-mono text-xs max-h-[520px] overflow-y-auto space-y-1"
@@ -269,16 +408,10 @@ export default function AutopilotPage() {
 
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <a
-          href="/snapshot"
-          className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-        >
-          ← Snapshot
-        </a>
-        <a
           href="/history"
           className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
         >
-          View history →
+          View history
         </a>
       </div>
     </div>
@@ -334,7 +467,6 @@ function EnvForm({
           <span className={`inline-block size-2 rounded-full ${ok ? "bg-green-500" : "bg-gray-400"}`} />
           {title}
         </div>
-        <span className="text-xs opacity-60">pasted URL will be normalized to origin</span>
       </div>
       <label className="block">
         <span className="text-xs opacity-70">URL</span>
@@ -375,7 +507,7 @@ function EnvForm({
       </div>
       <label className="block">
         <span className="text-xs opacity-70">
-          CSR token <span className="opacity-60">(optional; from <code>localStorage.getItem(&apos;csr&apos;)</code>)</span>
+          CSR token <span className="opacity-60">(optional)</span>
         </span>
         <input
           value={csr}

@@ -2,12 +2,22 @@ import { z } from "zod";
 import { RestConnector } from "@pplus-sync/connectors";
 import { AutopilotAi } from "@pplus-sync/ai";
 import { entityKindSchema } from "@pplus-sync/shared";
-import type { Entity } from "@pplus-sync/core";
+import type { Entity, EntityKind } from "@pplus-sync/core";
+import {
+  stripServerFields,
+  injectTargetId,
+  remapReferences,
+  rewritePropertyKey,
+  type IdMap,
+} from "@pplus-sync/core";
+import { rewriteFormula } from "@pplus-sync/formula";
 import { db, schema } from "@pplus-sync/db";
 import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/* ─── Input schemas ────────────────────────────────────────────────────── */
 
 const envSchema = z.object({
   label: z.string().default("env"),
@@ -21,38 +31,76 @@ const body = z.object({
   source: envSchema,
   target: envSchema,
   kinds: z.array(entityKindSchema).min(1),
-  limitPerKind: z.number().int().min(1).max(500).default(200),
-  /**
-   * Hard ceiling on AI repair attempts per op. The loop also terminates
-   * when Claude returns `ok:false` `maxStall` times in a row. Bumped to
-   * 40 because users demand "no failed operation" — we keep trying hard.
-   */
+  limitPerKind: z.number().int().min(1).max(2000).default(500),
   maxAiRetries: z.number().int().min(0).max(100).default(40),
-  /** Max consecutive "no safe fix" returns from Claude before we stop. */
   maxStall: z.number().int().min(1).max(10).default(3),
   dryRun: z.boolean().default(false),
-  // Safe-mode defaults: never touch system records, never delete on target,
-  // never re-write existing entities. Flip them explicitly to broaden scope.
   includeBuiltins: z.boolean().default(false),
   includeDeletes: z.boolean().default(false),
-  includeUpdates: z.boolean().default(false),
+  includeUpdates: z.boolean().default(true),
 });
 
-/**
- * Kinds that are structurally un-syncable via flat CRUD (they exist, but
- * PPlus manages them through tree/specialty endpoints that need more
- * context). Hard-ban regardless of includeBuiltins. Flipping the toggle
- * won't emit ops for these — keeps 405s out of the log.
- */
-const NEVER_SYNCABLE_KINDS = new Set<string>(["level", "accessibility", "setting", "delegation", "holiday"]);
+/* ─── Sync ordering (mirrors backend ConfigurationSyncOrchestrator) ──── */
 
 /**
- * Detect "system/built-in" records so we never mutate them. Heuristics come
- * from real PPlus payloads observed on pplusrua-prod:
- *   - log.type === 1 means built-in (Task/Risk/Issue/…). type === 2 is custom.
- *   - payload.canBeDeleted === false marks protected records (lookups, logs).
- *   - Numeric id below a threshold on lookups (<1000) usually means seeded.
+ * The backend syncs in this exact order:
+ *  1. Level schema (names, tree structure)
+ *  2. Level connections (Sources / parent-child)
+ *  3. Log schema
+ *  4. Level-attached logs (which logs bind to which levels)
+ *  5. Properties (with key adjustment for renamed levels/logs)
+ *  6. Log properties
+ *  7. Level sections
+ *  8. Property statuses
+ *  9. Level statuses
+ * 10. Phase gates
+ * 11. Lookups
+ * 12. Workflows
+ * 13. Dashboards + chart components
+ * 14. Everything else (roles, escalation, procurement, etc.)
  */
+const SYNC_ORDER: EntityKind[] = [
+  "level",
+  "source",             // level connections
+  "log",
+  "levelAttachedLogs",  // level-log bindings
+  "property",
+  "logProperty",
+  "levelSection",
+  "propertyStatus",
+  "levelStatus",
+  "phaseGate",
+  "lookup",
+  "workflow",
+  "dashboard",
+  "chartComponent",
+  // Admin kinds last
+  "role",
+  "escalation",
+  "procurement",
+  "cardConfig",
+  "processBuilder",
+  "approvalProcess",
+  "codeBuilder",
+  "notification",
+  // Global admin
+  "user",
+  "group",
+  "classification",
+  "scheduleView",
+  "setting",
+  "holiday",
+  "accessibility",
+  "delegation",
+];
+
+function orderKinds(requested: EntityKind[]): EntityKind[] {
+  const set = new Set(requested);
+  return SYNC_ORDER.filter((k) => set.has(k));
+}
+
+/* ─── Built-in / system record detection ───────────────────────────────── */
+
 function isBuiltin(kind: string, entity: { payload?: unknown }): boolean {
   const p = entity.payload as Record<string, unknown> | undefined;
   if (!p || typeof p !== "object") return false;
@@ -63,6 +111,27 @@ function isBuiltin(kind: string, entity: { payload?: unknown }): boolean {
   return false;
 }
 
+/* ─── Entity name helpers ──────────────────────────────────────────────── */
+
+function entityName(e: Entity | { payload?: unknown; name?: string }): string {
+  const p = e.payload as Record<string, unknown> | undefined;
+  if (e.name) return String(e.name);
+  if (!p) return "";
+  const raw = p.Name ?? p.name ?? p.displayName ?? p.DisplayName ?? "";
+  if (typeof raw === "string") return raw;
+  if (raw && typeof raw === "object") {
+    const obj = raw as { en?: string; ar?: string };
+    return obj.en ?? obj.ar ?? "";
+  }
+  return "";
+}
+
+function normalizedName(e: Entity): string {
+  return entityName(e).toLowerCase().replace(/[\s_-]+/g, "").trim();
+}
+
+/* ─── SSE envelope ─────────────────────────────────────────────────────── */
+
 interface Envelope {
   type: "status" | "ai" | "op" | "phase" | "done" | "error";
   phase: "init" | "capture" | "diff" | "apply" | "done";
@@ -70,15 +139,8 @@ interface Envelope {
   [k: string]: unknown;
 }
 
-/**
- * POST /api/autopilot — SSE stream
- * Runs the full sync pipeline end-to-end with Claude in the loop:
- *   1. Capture source + target for each kind.
- *   2. Deterministic diff (create/update/delete) using id → key → name.
- *   3. Apply each op; on failure, ask Claude to repair the payload using
- *      the server error + a real target sample, retry up to maxAiRetries.
- *   4. Every event written to audit_entries so the run is fully replayable.
- */
+/* ─── Main handler ─────────────────────────────────────────────────────── */
+
 export async function POST(req: Request) {
   const parsed = body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -100,9 +162,7 @@ export async function POST(req: Request) {
       actor: "autopilot",
       status: "draft",
     } as never).onConflictDoNothing();
-  } catch {
-    /* non-fatal */
-  }
+  } catch { /* non-fatal */ }
 
   const encoder = new TextEncoder();
   async function persist(ev: Envelope) {
@@ -116,9 +176,7 @@ export async function POST(req: Request) {
         message: ev.type,
         payloadRef: JSON.stringify(ev),
       } as never);
-    } catch {
-      /* non-fatal */
-    }
+    } catch { /* non-fatal */ }
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -135,11 +193,21 @@ export async function POST(req: Request) {
       try {
         await send({ type: "status", phase: "init", msg: `Run ${runId} starting`, runId });
 
-        // ── Phase 1: capture ──────────────────────────────────────────
+        // ── Phase 1: Capture ─────────────────────────────────────────
         await send({ type: "phase", phase: "capture", msg: "Capturing source + target" });
         const srcByKind: Record<string, Entity[]> = {};
         const tgtByKind: Record<string, Entity[]> = {};
-        for (const kind of input.kinds) {
+
+        // Always capture levels and logs first — needed for ID mapping.
+        const orderedKinds = orderKinds(input.kinds);
+        const allKinds = new Set(orderedKinds);
+        // Ensure levels and logs are always captured for mapping, even if
+        // not explicitly requested for sync.
+        const captureKinds = new Set(orderedKinds);
+        captureKinds.add("level");
+        captureKinds.add("log");
+
+        for (const kind of captureKinds) {
           const srcBucket: Entity[] = [];
           const tgtBucket: Entity[] = [];
           try {
@@ -170,66 +238,197 @@ export async function POST(req: Request) {
           });
         }
 
-        // ── Phase 2: diff ─────────────────────────────────────────────
+        // ── Build ID maps (level + log matching) ─────────────────────
+        // This mirrors the backend's LevelMatcher: match by ID, then by
+        // normalized name, building source→target maps for both IDs and names.
+        const idMap: IdMap = {
+          levels: new Map(),
+          logs: new Map(),
+          levelNames: new Map(),
+          logNames: new Map(),
+        };
+
+        function buildEntityMap(
+          kind: "level" | "log",
+          srcEntities: Entity[],
+          tgtEntities: Entity[],
+        ) {
+          const tgtById = new Map(tgtEntities.map((e) => [e.id, e]));
+          const tgtByName = new Map(tgtEntities.map((e) => [normalizedName(e), e]));
+          const usedTargetIds = new Set<string>();
+
+          for (const src of srcEntities) {
+            // Try exact ID match first.
+            let matched = tgtById.get(src.id);
+            if (matched && !usedTargetIds.has(matched.id)) {
+              usedTargetIds.add(matched.id);
+            } else {
+              // Try normalized name match.
+              matched = tgtByName.get(normalizedName(src));
+              if (matched && !usedTargetIds.has(matched.id)) {
+                usedTargetIds.add(matched.id);
+              } else {
+                matched = undefined;
+              }
+            }
+
+            if (matched) {
+              if (kind === "level") {
+                idMap.levels.set(src.id, matched.id);
+                const srcName = entityName(src);
+                const tgtName = entityName(matched);
+                if (srcName && tgtName && srcName !== tgtName) {
+                  idMap.levelNames.set(srcName, tgtName);
+                }
+              } else {
+                idMap.logs.set(src.id, matched.id);
+                const srcName = entityName(src);
+                const tgtName = entityName(matched);
+                if (srcName && tgtName && srcName !== tgtName) {
+                  idMap.logNames.set(srcName, tgtName);
+                }
+              }
+            }
+          }
+        }
+
+        buildEntityMap("level", srcByKind.level ?? [], tgtByKind.level ?? []);
+        buildEntityMap("log", srcByKind.log ?? [], tgtByKind.log ?? []);
+
+        await send({
+          type: "status",
+          phase: "capture",
+          msg: `ID maps built: ${idMap.levels.size} levels, ${idMap.logs.size} logs mapped` +
+            (idMap.levelNames.size > 0 ? ` · level renames: ${[...idMap.levelNames.entries()].map(([s, t]) => `${s}→${t}`).join(", ")}` : "") +
+            (idMap.logNames.size > 0 ? ` · log renames: ${[...idMap.logNames.entries()].map(([s, t]) => `${s}→${t}`).join(", ")}` : ""),
+        });
+
+        // Also build a property key map for formula rewriting.
+        // Maps source property key → target property key.
+        const propertyKeyMap = new Map<string, string>();
+        function buildPropertyKeyMap(srcProps: Entity[], tgtProps: Entity[]) {
+          const tgtByKey = new Map(tgtProps.filter((e) => e.key).map((e) => [e.key!, e]));
+          const tgtByName = new Map(tgtProps.map((e) => [normalizedName(e), e]));
+
+          for (const src of srcProps) {
+            if (!src.key) continue;
+            // Rewrite the source key using level/log name map.
+            const rewrittenKey = rewritePropertyKey(src.key, idMap.levelNames, idMap.logNames);
+
+            // Try to find a matching target property.
+            const exact = tgtByKey.get(src.key) ?? tgtByKey.get(rewrittenKey);
+            if (exact?.key) {
+              if (src.key !== exact.key) {
+                propertyKeyMap.set(src.key, exact.key);
+              }
+              continue;
+            }
+            // Fall back to name match.
+            const byName = tgtByName.get(normalizedName(src));
+            if (byName?.key && src.key !== byName.key) {
+              propertyKeyMap.set(src.key, byName.key);
+            }
+          }
+        }
+
+        buildPropertyKeyMap(
+          [...(srcByKind.property ?? []), ...(srcByKind.logProperty ?? [])],
+          [...(tgtByKind.property ?? []), ...(tgtByKind.logProperty ?? [])],
+        );
+
+        if (propertyKeyMap.size > 0) {
+          await send({
+            type: "status",
+            phase: "capture",
+            msg: `Property key map: ${propertyKeyMap.size} key rewrites identified`,
+          });
+        }
+
+        // ── Phase 2: Diff ────────────────────────────────────────────
         await send({ type: "phase", phase: "diff", msg: "Computing diff" });
+
         interface Op {
           id: string;
           op: "create" | "update" | "delete";
-          kind: string;
-          sourceId?: string;
-          targetId?: string;
+          kind: EntityKind;
+          sourceId?: string | undefined;
+          targetId?: string | undefined;
+          parentId?: string | undefined;
           label: string;
-          payload?: unknown;
+          payload?: unknown | undefined;
           sourceEntity?: Entity | undefined;
         }
         const ops: Op[] = [];
         let skippedBuiltin = 0;
         let skippedUpdate = 0;
         let skippedDelete = 0;
-        let skippedUnsyncable = 0;
-        for (const kind of input.kinds) {
-          if (NEVER_SYNCABLE_KINDS.has(kind)) {
-            skippedUnsyncable += (srcByKind[kind]?.length ?? 0);
-            await send({
-              type: "status",
-              phase: "diff",
-              msg: `↷ ${kind}: not syncable via flat CRUD — skipped entirely`,
-              kind,
-            });
-            continue;
-          }
+
+        for (const kind of orderedKinds) {
           const src = srcByKind[kind] ?? [];
           const tgt = tgtByKind[kind] ?? [];
+
+          // Build match indexes on target entities.
           const byId = new Map(tgt.map((t) => [t.id, t] as const));
           const byKey = new Map(tgt.filter((t) => t.key).map((t) => [t.key!, t] as const));
-          const byName = new Map(
-            tgt.map((t) => [t.name?.toLowerCase().trim(), t] as const),
-          );
+          const byName = new Map(tgt.map((t) => [normalizedName(t), t] as const));
           const usedTargetIds = new Set<string>();
+
           for (const s of src) {
+            // For properties, also try matching by rewritten key.
+            let rewrittenKey: string | undefined;
+            if (s.key && (kind === "property" || kind === "logProperty")) {
+              rewrittenKey = rewritePropertyKey(s.key, idMap.levelNames, idMap.logNames);
+            }
+
             const m =
               byId.get(s.id) ??
               (s.key ? byKey.get(s.key) : undefined) ??
-              byName.get(s.name?.toLowerCase().trim());
+              (rewrittenKey ? byKey.get(rewrittenKey) : undefined) ??
+              byName.get(normalizedName(s));
+
             if (!m) {
               // CREATE
               if (!includeBuiltins && isBuiltin(kind, s)) {
                 skippedBuiltin++;
                 continue;
               }
+
+              // Prepare the create payload.
+              let payload = stripServerFields(s.payload);
+              payload = remapReferences(payload, idMap);
+
+              // Rewrite property key in payload if level/log was renamed.
+              if (kind === "property" || kind === "logProperty") {
+                payload = rewritePayloadKey(payload, idMap);
+              }
+              // Rewrite formulas in the payload.
+              if (propertyKeyMap.size > 0) {
+                payload = rewritePayloadFormulas(payload, propertyKeyMap);
+              }
+
+              // Resolve parentId for perLevel/perLog kinds.
+              let parentId: string | undefined;
+              if (s.parentId) {
+                parentId = idMap.levels.get(s.parentId) ?? idMap.logs.get(s.parentId) ?? s.parentId;
+              }
+
               ops.push({
                 id: `${kind}:create:${s.id}`,
                 op: "create",
                 kind,
                 sourceId: s.id,
-                label: `Create ${kind}: ${s.name}`,
-                payload: s.payload,
+                parentId,
+                label: `Create ${kind}: ${entityName(s)}`,
+                payload,
                 sourceEntity: s,
               });
               continue;
             }
+
             usedTargetIds.add(m.id);
+            // Skip if content identical.
             if (s.hash && m.hash && s.hash === m.hash) continue;
+
             // UPDATE
             if (!includeUpdates) {
               skippedUpdate++;
@@ -239,17 +438,38 @@ export async function POST(req: Request) {
               skippedBuiltin++;
               continue;
             }
+
+            // Prepare update payload with target ID injected.
+            let payload = injectTargetId(s.payload, m.id);
+            payload = remapReferences(payload, idMap);
+
+            if (kind === "property" || kind === "logProperty") {
+              payload = rewritePayloadKey(payload, idMap);
+            }
+            if (propertyKeyMap.size > 0) {
+              payload = rewritePayloadFormulas(payload, propertyKeyMap);
+            }
+
+            let parentId: string | undefined;
+            if (m.parentId) {
+              parentId = m.parentId; // Keep target's parent for updates.
+            } else if (s.parentId) {
+              parentId = idMap.levels.get(s.parentId) ?? idMap.logs.get(s.parentId) ?? s.parentId;
+            }
+
             ops.push({
               id: `${kind}:update:${s.id}:${m.id}`,
               op: "update",
               kind,
               sourceId: s.id,
               targetId: m.id,
-              label: `Update ${kind}: ${s.name}`,
-              payload: s.payload,
+              parentId,
+              label: `Update ${kind}: ${entityName(s)}`,
+              payload,
               sourceEntity: s,
             });
           }
+
           // DELETE (target-only entities)
           if (includeDeletes) {
             for (const t of tgt) {
@@ -263,7 +483,8 @@ export async function POST(req: Request) {
                 op: "delete",
                 kind,
                 targetId: t.id,
-                label: `Delete ${kind}: ${t.name}`,
+                parentId: t.parentId,
+                label: `Delete ${kind}: ${entityName(t)}`,
                 sourceEntity: t,
               });
             }
@@ -272,6 +493,7 @@ export async function POST(req: Request) {
             skippedDelete += orphanCount;
           }
         }
+
         await send({
           type: "status",
           phase: "diff",
@@ -292,10 +514,14 @@ export async function POST(req: Request) {
           return;
         }
 
-        // ── Phase 3: apply with Claude-assisted self-healing ──────────
+        // ── Phase 3: Apply with Claude-assisted self-healing ─────────
         await send({ type: "phase", phase: "apply", msg: `Applying ${ops.length} op(s)` });
         let applied = 0;
         let failed = 0;
+        const addedProperties: string[] = [];
+        const updatedProperties: string[] = [];
+        const addedItems: string[] = [];
+
         for (const op of ops) {
           await send({ type: "op", phase: "apply", msg: `→ ${op.label}`, opId: op.id });
           let attempt = 0;
@@ -307,8 +533,6 @@ export async function POST(req: Request) {
           let consecutiveStall = 0;
           let consecutiveSameError = 0;
           const priorAttempts: string[] = [];
-          // Provide Claude up to 3 successful target samples for richer
-          // reference shapes. If target bucket is smaller, slice shorter.
           const targetSamples = (tgtByKind[op.kind] ?? [])
             .slice(0, 3)
             .map((e) => e.payload)
@@ -325,6 +549,7 @@ export async function POST(req: Request) {
                   risk: "low",
                   ...(op.sourceId ? { sourceId: op.sourceId } : {}),
                   ...(op.targetId ? { targetId: op.targetId } : {}),
+                  ...(op.parentId ? { parentId: op.parentId } : {}),
                   ...(payload !== undefined ? { after: payload } : {}),
                 },
                 overridePath ? { overridePath } : undefined,
@@ -332,6 +557,7 @@ export async function POST(req: Request) {
             } catch (err) {
               res = { ok: false, error: `NETWORK ${(err as Error).message}` };
             }
+
             if (res.ok) {
               ok = true;
               await send({
@@ -343,62 +569,22 @@ export async function POST(req: Request) {
                 ...(res.newId ? { newId: res.newId } : {}),
                 attempt,
               });
-              // Dashboard-specific post-create hook: the metadata POST only
-              // creates the shell. The chart grid lives at
-              // payload.charts.configration and must be POSTed separately
-              // to /Dashboards/Charts/Link, else the target dashboard
-              // appears empty.
-              if (
-                op.op === "create" &&
-                op.kind === "dashboard" &&
-                res.newId &&
-                op.sourceEntity?.payload
-              ) {
-                const srcPayload = op.sourceEntity.payload as {
-                  charts?: { configration?: string };
-                };
-                const configration = srcPayload.charts?.configration;
-                if (configration) {
-                  try {
-                    const linkUrl = `${input.target.baseUrl.replace(/\/$/, "")}/service/api/Dashboards/Charts/Link`;
-                    const linkRes = await fetch(linkUrl, {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Accept: "application/json, text/plain, */*",
-                        "X-Requested-With": "XMLHttpRequest",
-                        Authorization: `Bearer ${input.target.secret}`,
-                        ...(input.target.csr ? { csr: input.target.csr } : { csr: "1" }),
-                      },
-                      body: JSON.stringify({ DashboardId: String(res.newId), configration }),
-                    });
-                    if (linkRes.ok) {
-                      await send({
-                        type: "op",
-                        phase: "apply",
-                        msg: `✓ ${op.label} — charts linked`,
-                        opId: `${op.id}:link`,
-                        result: "ok",
-                      });
-                    } else {
-                      await send({
-                        type: "op",
-                        phase: "apply",
-                        msg: `✗ ${op.label} — charts NOT linked (HTTP ${linkRes.status})`,
-                        opId: `${op.id}:link`,
-                        result: "fail",
-                      });
-                    }
-                  } catch (e) {
-                    await send({
-                      type: "op",
-                      phase: "apply",
-                      msg: `✗ ${op.label} — charts link errored: ${(e as Error).message}`,
-                      opId: `${op.id}:link`,
-                      result: "fail",
-                    });
-                  }
+
+              // Track for sync notification.
+              if (op.kind === "property" || op.kind === "logProperty") {
+                const key = getPayloadKey(payload);
+                if (key) {
+                  if (op.op === "create") addedProperties.push(key);
+                  else if (op.op === "update") updatedProperties.push(key);
                 }
+              }
+              if (op.kind === "lookup" && op.op === "create") {
+                addedItems.push(entityName(op.sourceEntity ?? { name: "" }));
+              }
+
+              // Dashboard post-create: link charts.
+              if (op.op === "create" && op.kind === "dashboard" && res.newId && op.sourceEntity?.payload) {
+                await linkDashboardCharts(input.target, res.newId, op.sourceEntity.payload, send, op);
               }
               break;
             }
@@ -406,10 +592,7 @@ export async function POST(req: Request) {
             prevLastError = lastError;
             lastError = res.error ?? "unknown";
 
-            // Only hard stop for explicit server refusals — method-not-allowed
-            // or policy text. Everything else (validation, schema, network,
-            // 500s) stays in the loop. Claude can still propose altPaths on
-            // network errors (maybe the hostname is wrong, maybe the path is).
+            // Hard stop for explicit server refusals.
             const refusalText = /not allowed|not permitted|forbidden|غير مسموح/i.test(lastError);
             const isMethodNotAllowed = /HTTP\s+405/.test(lastError);
             const isProtected = isMethodNotAllowed || refusalText;
@@ -435,9 +618,6 @@ export async function POST(req: Request) {
               break;
             }
 
-            // Detect same-error stall (server returning identical response
-            // twice). Flag Claude so it proposes a structurally different
-            // approach instead of minor tweaks.
             const sameAsLast = prevLastError && lastError === prevLastError;
             if (sameAsLast) consecutiveSameError++;
             else consecutiveSameError = 0;
@@ -455,21 +635,20 @@ export async function POST(req: Request) {
               priorAttempts: [
                 ...priorAttempts,
                 ...(consecutiveSameError >= 1
-                  ? [`SAME ERROR REPEATED — try a structurally different approach (different wrapper shape, different field names, different endpoint).`]
+                  ? [`SAME ERROR REPEATED — try a structurally different approach.`]
                   : []),
               ],
             });
+
             if (!fix.ok) {
               consecutiveStall++;
               await send({
                 type: "ai",
                 phase: "apply",
-                msg: `Claude: no safe fix — ${fix.reason}${consecutiveStall < maxStall ? " · retrying with richer context" : " · giving up"}`,
+                msg: `Claude: no safe fix — ${fix.reason}${consecutiveStall < maxStall ? " · retrying" : " · giving up"}`,
                 opId: op.id,
               });
               if (consecutiveStall >= maxStall) break;
-              // Keep looping — the next iteration will re-invoke Claude with
-              // one more "no-fix" in priorAttempts, which often unblocks.
               priorAttempts.push(`attempt ${attempt + 1}: Claude declined — ${fix.reason}`);
               attempt++;
               continue;
@@ -486,6 +665,13 @@ export async function POST(req: Request) {
           }
           if (ok) applied++;
           else failed++;
+        }
+
+        // Send sync notification to target (best-effort).
+        if (applied > 0) {
+          try {
+            await tgtConn.notifySync({ updatedProperties, addedProperties, addedItems });
+          } catch { /* ignore */ }
         }
 
         await send({
@@ -514,6 +700,8 @@ export async function POST(req: Request) {
   });
 }
 
+/* ─── Helpers ──────────────────────────────────────────────────────────── */
+
 function authConnector(env: z.infer<typeof envSchema>): RestConnector {
   const extra = env.csr ? { csr: env.csr } : undefined;
   const auth =
@@ -537,7 +725,6 @@ function extractStatus(err: string): number {
   return m ? Number(m[1]) : 500;
 }
 
-/** Strip HTML bodies and long JSON down to a human-readable single line. */
 function summarizeErr(err: string): string {
   const s = err.replace(/<!DOCTYPE[\s\S]*?<\/html>/gi, "").replace(/\s+/g, " ").trim();
   try {
@@ -550,3 +737,105 @@ function summarizeErr(err: string): string {
   }
 }
 
+function getPayloadKey(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const p = payload as Record<string, unknown>;
+  return (p.key ?? p.Key) as string | undefined;
+}
+
+/**
+ * Rewrite the key/Key field inside a payload using the level/log name map.
+ */
+function rewritePayloadKey(payload: unknown, idMap: IdMap): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const obj = { ...(payload as Record<string, unknown>) };
+  const key = (obj.key ?? obj.Key) as string | undefined;
+  if (key) {
+    const newKey = rewritePropertyKey(key, idMap.levelNames, idMap.logNames);
+    if ("key" in obj) obj.key = newKey;
+    if ("Key" in obj) obj.Key = newKey;
+  }
+  return obj;
+}
+
+/**
+ * Rewrite {{Key}} references in formula/script fields within a payload.
+ * Uses the deterministic formula rewriter from @pplus-sync/formula.
+ */
+function rewritePayloadFormulas(
+  payload: unknown,
+  keyMap: Map<string, string>,
+): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const obj = { ...(payload as Record<string, unknown>) };
+  const formulaFields = ["formula", "Formula", "formulaRaw", "FormulaRaw", "script", "Script"];
+  const keyMapObj: Record<string, string> = {};
+  for (const [from, to] of keyMap) keyMapObj[from] = to;
+
+  for (const field of formulaFields) {
+    const val = obj[field];
+    if (typeof val !== "string" || !val.includes("{{")) continue;
+    try {
+      const result = rewriteFormula(val, keyMapObj);
+      if (result.changed) {
+        obj[field] = result.after;
+      }
+    } catch {
+      // Leave formula unchanged if rewriter fails.
+    }
+  }
+  return obj;
+}
+
+/**
+ * Post-create hook for dashboards: link the chart grid to the new dashboard.
+ * The metadata POST creates the shell, but chart layout lives at
+ * payload.charts.configration and must be POSTed to /Dashboards/Charts/Link.
+ */
+async function linkDashboardCharts(
+  target: z.infer<typeof envSchema>,
+  newId: string,
+  sourcePayload: unknown,
+  send: (ev: Omit<Envelope, "ts">) => Promise<void>,
+  op: { id: string; label: string },
+) {
+  const srcPayload = sourcePayload as {
+    charts?: { configration?: string };
+  };
+  const configration = srcPayload.charts?.configration;
+  if (!configration) return;
+
+  try {
+    const linkUrl = `${target.baseUrl.replace(/\/$/, "")}/service/api/Dashboards/Charts/Link`;
+    const linkRes = await fetch(linkUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/plain, */*",
+        "X-Requested-With": "XMLHttpRequest",
+        Authorization: `Bearer ${target.secret}`,
+        ...(target.csr ? { csr: target.csr } : { csr: "1" }),
+      },
+      body: JSON.stringify({ DashboardId: String(newId), configration }),
+    });
+    if (linkRes.ok) {
+      await send({
+        type: "op", phase: "apply",
+        msg: `✓ ${op.label} — charts linked`,
+        opId: `${op.id}:link`, result: "ok",
+      });
+    } else {
+      await send({
+        type: "op", phase: "apply",
+        msg: `✗ ${op.label} — charts NOT linked (HTTP ${linkRes.status})`,
+        opId: `${op.id}:link`, result: "fail",
+      });
+    }
+  } catch (e) {
+    await send({
+      type: "op", phase: "apply",
+      msg: `✗ ${op.label} — charts link errored: ${(e as Error).message}`,
+      opId: `${op.id}:link`, result: "fail",
+    });
+  }
+}

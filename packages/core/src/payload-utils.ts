@@ -184,10 +184,18 @@ export function ensureLocalized(value: unknown): unknown {
 }
 
 /**
- * Normalize a payload for PPlus API compatibility:
- *  - Convert string displayName/name/Name to {ar, en} localized objects
- *  - Strip frontend-only fields (propertyData, operationLevel)
- *  - Recursively normalize nested items/Items arrays
+ * Normalize a payload for PPlus API compatibility.
+ *
+ * Applies the following transformations based on knowledge from the
+ * ConfigurationDiffTool, pplus-knowledge repo, and end-to-end testing:
+ *
+ *  1. Convert string displayName/name to {ar, en} localized objects
+ *  2. Strip frontend-only fields (propertyData, operationLevel)
+ *  3. Recursively normalize nested items/Items arrays
+ *  4. Strip nested item IDs for create operations
+ *  5. Clean dashboard/chart filter objects
+ *  6. Ensure log type=2 on log creates (type=1 = built-in, read-only)
+ *  7. Preserve PPlus typos (configration, fuctionName, isRequird)
  */
 export function normalizePayload(payload: unknown, kind?: string): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -204,9 +212,10 @@ export function normalizePayload(payload: unknown, kind?: string): unknown {
   const LOCALIZE_KINDS = new Set([
     "lookup", "propertyStatus", "levelStatus", "phaseGate",
     "property", "logProperty", "levelSection",
+    "levelAttachedLogs", "role", "escalation", "notification",
   ]);
   if (!kind || LOCALIZE_KINDS.has(kind)) {
-    for (const field of ["displayName", "DisplayName", "name", "Name"]) {
+    for (const field of ["displayName", "DisplayName", "name", "Name", "description", "Description"]) {
       if (field in obj && typeof obj[field] === "string") {
         obj[field] = ensureLocalized(obj[field]);
       }
@@ -214,14 +223,26 @@ export function normalizePayload(payload: unknown, kind?: string): unknown {
   }
 
   // Recursively normalize nested items (lookup items, phase gate items, etc.)
-  for (const arrayField of ["items", "Items"]) {
+  // Also strip server-assigned IDs from nested items for create operations.
+  for (const arrayField of ["items", "Items", "connectedLogs", "ConnectedLogs"]) {
     const items = obj[arrayField];
     if (Array.isArray(items)) {
-      obj[arrayField] = items.map((item) => normalizePayload(item, kind));
+      obj[arrayField] = items.map((item) => {
+        let normalized = normalizePayload(item, kind);
+        // Strip IDs from nested items (they'll get new IDs on target).
+        if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
+          const itemObj = { ...(normalized as Record<string, unknown>) };
+          for (const idField of ["id", "Id", "_id"]) {
+            delete itemObj[idField];
+          }
+          normalized = itemObj;
+        }
+        return normalized;
+      });
     }
   }
 
-  // Normalize filters inside chart configs.
+  // Normalize filters inside chart configs and selections.
   for (const filtersField of ["filters", "Filters"]) {
     const filters = obj[filtersField];
     if (Array.isArray(filters)) {
@@ -235,6 +256,45 @@ export function normalizePayload(payload: unknown, kind?: string): unknown {
         }
         return f;
       });
+    }
+  }
+
+  // ── Entity-specific transformations ──
+
+  // Logs: ensure type=2 (custom) on creates. type=1 is built-in/read-only.
+  if (kind === "log" && obj.type === 1) {
+    obj.type = 2;
+  }
+
+  // Dashboard: ensure DashboardId is string, configration (typo preserved) is JSON string.
+  if (kind === "dashboard") {
+    if ("DashboardId" in obj && typeof obj.DashboardId === "number") {
+      obj.DashboardId = String(obj.DashboardId);
+    }
+    // Ensure charts.configration is a JSON string, not an object.
+    const charts = obj.charts as Record<string, unknown> | undefined;
+    if (charts && typeof charts === "object" && "configration" in charts) {
+      if (typeof charts.configration === "object") {
+        charts.configration = JSON.stringify(charts.configration);
+      }
+    }
+  }
+
+  // Workflows: normalize activity/action arrays.
+  if (kind === "workflow") {
+    for (const field of ["activities", "Activities", "actions", "Actions"]) {
+      const arr = obj[field];
+      if (Array.isArray(arr)) {
+        obj[field] = arr.map((item) => {
+          if (item && typeof item === "object") {
+            const a = { ...(item as Record<string, unknown>) };
+            delete a.id;
+            delete a.Id;
+            return a;
+          }
+          return item;
+        });
+      }
     }
   }
 

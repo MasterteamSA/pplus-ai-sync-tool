@@ -12,16 +12,37 @@ import { AiClient } from "./client";
  * fixPayload prompt so Claude has concrete knowledge instead of guessing.
  */
 const PPLUS_CONVENTIONS = [
-  "PPlus wraps list responses as {status, code, data: [...]} (or nested {data:{data:{...}}} for single items).",
-  "Base path is /service/api/... for most endpoints. Some (users, groups) live under /service/api/identity/... Chart and Dashboard endpoints need a 'csr' header.",
-  "Create paths: POST /service/api/Logs, POST /service/api/Lookups, POST /service/api/Levels/{parentId}/children (levels are tree-scoped, not flat).",
-  "Update paths: PUT /service/api/Logs/{id}, PUT /service/api/Lookups/{id}.",
-  "Custom logs differ from built-in by type: type=1 is built-in (read-only on most instances), type=2 is custom (user-creatable).",
-  "payload.canBeDeleted=false means the server refuses delete. payload.id=<1000 on lookups usually means seeded/system.",
-  "Arabic error 'غير مسموح الحذف' (not allowed to delete) is a server-side policy — never repair by retrying delete.",
-  "Some endpoints demand both name (string) AND descriptionObject ({ar,en}). Missing either yields 500 with a generic 'Internal Server Error'.",
-  "POST to /service/api/Logs might expect the body under {log: {...}} or {data: {...}} wrapper on some instances — try both shapes if raw POST 500s.",
-  "Created entities must NOT carry id/_id/createdAt/updatedAt/createdBy/updatedBy (server assigns). Updates usually need id in the body AND in the URL.",
+  // ── Response format ──
+  "PPlus wraps responses as {status, code, data: [...], message, errors}. Single items: {data:{...}}.",
+  // ── Base paths ──
+  "Base path is /service/api/... (or /Service/api/... — case varies by deployment). Users/Groups under /service/api/identity/...",
+  "Chart and Dashboard endpoints need header 'csr: <token>'.",
+  // ── CRUD paths ──
+  "Create: POST /service/api/Logs, POST /service/api/Lookups, POST /service/api/SchemaLevels.",
+  "Update: PUT /service/api/Logs/{id}, PUT /service/api/Lookups/{id}. ID must be in body AND URL.",
+  "Created entities must NOT carry id/_id/createdAt/updatedAt/createdBy/updatedBy (server assigns).",
+  // ── CRITICAL: Bilingual/localized fields ──
+  "ALL user-visible string fields MUST be localized {ar: string, en: string} objects, NOT plain strings.",
+  "This applies to: displayName, name, Name, description — on lookups, properties, statuses, phase gates, sections, and their nested items.",
+  "FluentValidation rules dereference displayName.ar — a plain string causes NullReferenceException.",
+  "Example: displayName must be {\"ar\": \"حالة\", \"en\": \"Status\"}, not just \"Status\".",
+  "If the source payload has displayName as a string, convert it: {\"ar\": originalString, \"en\": originalString}.",
+  "Nested items (e.g. lookup items) also need name as {ar, en} objects.",
+  // ── Model binding ──
+  "If the server returns 'Invalid request payload format' (ModelBinderExtensions.GetSanitizedModelAsync), try stripping ALL id fields including from nested items.",
+  "Do NOT wrap the body in {data:{...}} or {lookup:{...}} envelopes — PPlus expects flat root objects.",
+  "For updates: keep the id in the root object matching the URL param; strip ids from nested items.",
+  // ── System records ──
+  "type=1 logs are built-in (read-only). type=2 is custom. canBeDeleted=false means protected.",
+  "Arabic 'غير مسموح التعديل' = edit not allowed, 'غير مسموح الحذف' = delete not allowed — server policy, never retry.",
+  // ── PPlus typos (MUST preserve) ──
+  "PPlus has intentional typos that MUST be preserved exactly: 'configration' (not configuration), 'fuctionName' (not functionName), 'isRequird' (not isRequired).",
+  // ── Dashboard specifics ──
+  "Save dashboard configs via POST /service/api/Dashboards/Charts/Link with {DashboardId: STRING, configration: JSON_STRING}.",
+  "DO NOT include DashboardId in POST /service/api/Dashboards/Chart body — causes WAF 403.",
+  "DO NOT include propertyData or operationLevel in filter objects — causes 403.",
+  // ── Authentication ──
+  "Login: POST /Service/api/users/authenticate with {UserName, Password}. Returns {data:{token, user}}.",
 ].join("\n  - ");
 
 export interface PayloadFixInput {

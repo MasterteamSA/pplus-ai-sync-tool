@@ -8,6 +8,7 @@ import {
   injectTargetId,
   remapReferences,
   rewritePropertyKey,
+  normalizePayload,
   type IdMap,
 } from "@pplus-sync/core";
 import { rewriteFormula } from "@pplus-sync/formula";
@@ -396,6 +397,7 @@ export async function POST(req: Request) {
               // Prepare the create payload.
               let payload = stripServerFields(s.payload);
               payload = remapReferences(payload, idMap);
+              payload = normalizePayload(payload, kind);
 
               // Rewrite property key in payload if level/log was renamed.
               if (kind === "property" || kind === "logProperty") {
@@ -442,6 +444,7 @@ export async function POST(req: Request) {
             // Prepare update payload with target ID injected.
             let payload = injectTargetId(s.payload, m.id);
             payload = remapReferences(payload, idMap);
+            payload = normalizePayload(payload, kind);
 
             if (kind === "property" || kind === "logProperty") {
               payload = rewritePayloadKey(payload, idMap);

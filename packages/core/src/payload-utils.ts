@@ -157,9 +157,93 @@ export function rewritePropertyKey(
   return result;
 }
 
+/** Fields that are frontend-only and must be stripped before API calls. */
+const FRONTEND_ONLY_FIELDS = new Set([
+  "propertyData",
+  "operationLevel",
+  "operationLevelGroup",
+]);
+
+/**
+ * Ensure a string field is in PPlus's bilingual {ar, en} format.
+ * PPlus model binders and FluentValidation rules require displayName, name,
+ * etc. to be localized objects — plain strings cause NullReferenceException
+ * on `x => x.displayName.ar`.
+ */
+export function ensureLocalized(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "string") {
+    return { ar: value, en: value };
+  }
+  if (typeof value === "object" && value !== null) {
+    const obj = value as Record<string, unknown>;
+    // Already localized.
+    if ("ar" in obj || "en" in obj) return value;
+  }
+  return value;
+}
+
+/**
+ * Normalize a payload for PPlus API compatibility:
+ *  - Convert string displayName/name/Name to {ar, en} localized objects
+ *  - Strip frontend-only fields (propertyData, operationLevel)
+ *  - Recursively normalize nested items/Items arrays
+ */
+export function normalizePayload(payload: unknown, kind?: string): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const obj = { ...(payload as Record<string, unknown>) };
+
+  // Strip frontend-only fields.
+  for (const field of FRONTEND_ONLY_FIELDS) {
+    delete obj[field];
+  }
+
+  // Localize string name fields for entities that need bilingual format.
+  const LOCALIZE_KINDS = new Set([
+    "lookup", "propertyStatus", "levelStatus", "phaseGate",
+    "property", "logProperty", "levelSection",
+  ]);
+  if (!kind || LOCALIZE_KINDS.has(kind)) {
+    for (const field of ["displayName", "DisplayName", "name", "Name"]) {
+      if (field in obj && typeof obj[field] === "string") {
+        obj[field] = ensureLocalized(obj[field]);
+      }
+    }
+  }
+
+  // Recursively normalize nested items (lookup items, phase gate items, etc.)
+  for (const arrayField of ["items", "Items"]) {
+    const items = obj[arrayField];
+    if (Array.isArray(items)) {
+      obj[arrayField] = items.map((item) => normalizePayload(item, kind));
+    }
+  }
+
+  // Normalize filters inside chart configs.
+  for (const filtersField of ["filters", "Filters"]) {
+    const filters = obj[filtersField];
+    if (Array.isArray(filters)) {
+      obj[filtersField] = filters.map((f) => {
+        if (f && typeof f === "object") {
+          const filter = { ...f };
+          for (const field of FRONTEND_ONLY_FIELDS) {
+            delete (filter as Record<string, unknown>)[field];
+          }
+          return filter;
+        }
+        return f;
+      });
+    }
+  }
+
+  return obj;
+}
+
 /**
  * Full preparation of a payload for a CREATE operation:
- * strip server fields, remap references, rewrite property key if applicable.
+ * strip server fields, remap references, normalize for PPlus API, rewrite property key.
  */
 export function prepareCreatePayload(
   payload: unknown,
@@ -168,6 +252,7 @@ export function prepareCreatePayload(
 ): unknown {
   let p = stripServerFields(payload);
   p = remapReferences(p, idMap);
+  p = normalizePayload(p, kind);
 
   // Rewrite the key field for property-like entities.
   if (kind === "property" || kind === "logProperty") {
@@ -186,7 +271,7 @@ export function prepareCreatePayload(
 
 /**
  * Full preparation of a payload for an UPDATE operation:
- * inject target ID, remap references, rewrite property key if applicable.
+ * inject target ID, remap references, normalize for PPlus API, rewrite property key.
  */
 export function prepareUpdatePayload(
   payload: unknown,
@@ -196,6 +281,7 @@ export function prepareUpdatePayload(
 ): unknown {
   let p = injectTargetId(payload, targetId);
   p = remapReferences(p, idMap);
+  p = normalizePayload(p, kind);
 
   if (kind === "property" || kind === "logProperty") {
     if (p && typeof p === "object" && !Array.isArray(p)) {

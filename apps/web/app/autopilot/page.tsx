@@ -460,38 +460,6 @@ function EnvForm({
   csr: string;
   onCsr: (v: string) => void;
 }) {
-  const [loginUser, setLoginUser] = useState("");
-  const [loginPass, setLoginPass] = useState("");
-  const [loginStatus, setLoginStatus] = useState<"idle" | "loading" | "ok" | "fail">("idle");
-  const [loginMsg, setLoginMsg] = useState("");
-
-  async function doLogin() {
-    if (!url || !loginUser || !loginPass) return;
-    setLoginStatus("loading");
-    setLoginMsg("");
-    try {
-      const res = await fetch("/api/connect/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ baseUrl: url, username: loginUser, password: loginPass }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        onAuth("bearer");
-        onSecret(data.token);
-        setLoginStatus("ok");
-        setLoginMsg(`Logged in as ${data.user}`);
-        setLoginPass("");
-      } else {
-        setLoginStatus("fail");
-        setLoginMsg(data.error ?? "Login failed");
-      }
-    } catch (e) {
-      setLoginStatus("fail");
-      setLoginMsg((e as Error).message);
-    }
-  }
-
   return (
     <div className="rounded-lg border border-black/10 dark:border-white/10 p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -509,41 +477,6 @@ function EnvForm({
           className="mt-1 w-full rounded border border-black/10 dark:border-white/10 bg-transparent p-2 text-sm font-mono"
         />
       </label>
-
-      {/* Quick Login */}
-      <div className="rounded border border-black/5 dark:border-white/5 p-2 space-y-2 bg-black/[0.02] dark:bg-white/[0.02]">
-        <div className="text-xs opacity-60">Quick login (auto-fetches bearer token)</div>
-        <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-          <input
-            value={loginUser}
-            onChange={(e) => setLoginUser(e.target.value)}
-            placeholder="Username"
-            className="rounded border border-black/10 dark:border-white/10 bg-transparent p-1.5 text-sm"
-          />
-          <input
-            value={loginPass}
-            onChange={(e) => setLoginPass(e.target.value)}
-            placeholder="Password"
-            type="password"
-            className="rounded border border-black/10 dark:border-white/10 bg-transparent p-1.5 text-sm"
-            onKeyDown={(e) => e.key === "Enter" && doLogin()}
-          />
-          <button
-            onClick={doLogin}
-            disabled={!url || !loginUser || !loginPass || loginStatus === "loading"}
-            className="rounded bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-          >
-            {loginStatus === "loading" ? "…" : "Login"}
-          </button>
-        </div>
-        {loginMsg && (
-          <div className={`text-xs ${loginStatus === "ok" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-            {loginMsg}
-          </div>
-        )}
-      </div>
-
-      {/* Manual token entry */}
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
           <span className="text-xs opacity-70">Auth mode</span>
